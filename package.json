@@ -13,7 +13,6 @@
     "url": "git://github.com/microsoft/node-pty.git"
   },
   "files": [
-    "binding.gyp",
     "lib/",
     "scripts/",
     "src/",
@@ -36,15 +35,12 @@
     "build": "tsc -b ./src/tsconfig.json",
     "watch": "tsc -b -w ./src/tsconfig.json",
     "lint": "eslint -c .eslintrc.js --ext .ts src/",
-    "install": "node scripts/install.js",
+    "install": "napi build --release",
     "postinstall": "node scripts/post-install.js",
     "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
     "posttest": "npm run lint",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "nan": "^2.14.0"
   },
   "devDependencies": {
     "@types/mocha": "^7.0.2",
@@ -55,6 +51,7 @@
     "eslint": "^6.8.0",
     "mocha": "^7.1.1",
     "ps-list": "^6.0.0",
-    "typescript": "^3.8.3"
+    "typescript": "^3.8.3",
+    "@napi-rs/cli": "^1.3.5"
   }
 }

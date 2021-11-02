@@ -1,39 +1,46 @@
 #[macro_use]
 extern crate napi;
 #[macro_use]
+extern crate napi_derive;
+#[macro_use]
 extern crate serde_derive;
 //#[macro_use]
 //extern crate napi_derive;
 
 use std::fmt::Result;
 use std::fs;
-use std::intrinsics::size_of;
+use std::ptr::null;
+use std::ffi::c_void;
+
 
 
 // import the preludes
 use napi::bindgen_prelude::*;
 
-use termios::*;
-use termios::os::target::{BRKINT, ICRNL, IMAXBEL, IUTF8, IXANY, IXON, ECHOKE, ECHOCTL};
-use termios::os::target::{VEOL2, VWERASE, VREPRINT, VLNEXT, VDISCARD };
-use termios::{Termios,cfsetspeed};
+use nix::fcntl::FcntlArg::{F_GETFL, F_SETFL};
 
-use libc::{O_NONBLOCK, execvp, ioctl, ptsname, winsize};
-use libc::tcgetpgrp;
-use libc::{FILE, fopen};
-use libc::sysctl;
-use libc::sysctl::*;
+use nix::libc::tcgetattr;
+
+use nix::unistd::execvp;
+use nix::libc::{O_NONBLOCK, TIOCSWINSZ, CTL_KERN, KERN_PROC, KERN_PROC_PID, winsize};
+use nix::unistd::tcgetpgrp;
+use nix::pty::ptsname;
+use nix::errno::errno;
+use nix::errno::Errno::{EBADF, EFAULT, EINVAL, ENOTTY};
+
+use nix::libc::{ioctl, sysctl, FILE };
+use nix::fcntl::{fcntl};
 
 use std::ffi::CStr;
-use fcntl::*;
-use fcntl::FcntlCmd::{GetLock, SetLock};
 
 use serde_json::{Map, Value};
 use serde::{Deserialize, Serialize};
 use napi_derive::napi;
 
 
-use errno::{errno};
+// use nix::libc::{execvp, ioctl, ptsname, winsize};
+
+mod conpty_console_list;
 
 
 // Structs
@@ -54,12 +61,6 @@ struct IUnixOpenProcess {
     pub pty: String
 }
 
-impl IUnixOpenProcess {
-    fn new(master: i32, slave: i32, pty: String) -> IUnixOpenProcess {
-        IUnixOpenProcess { master, slave, pty }
-    }
-}
-
 // Exposed functions for NAPI
 
 /// Fork
@@ -71,7 +72,7 @@ fn fork<T: Fn(i32,i32) -> Result<()>>(
     uid: i32, gid: i32,
     utf8: bool, onexit: T) -> Result<IUnixProcess> {
 
-    let mut term = Termios::from_fd(fd).unwrap();
+    let mut term = termios::;
     term.c_iflag = ICRNL | IXON | IXANY | IMAXBEL | BRKINT;
     term.c_oflag = OPOST | ONLCR;
     term.c_cflag = CREAD | CS8 | HUPCL;
@@ -96,7 +97,7 @@ fn fork<T: Fn(i32,i32) -> Result<()>>(
     term.c_cc[VMIN] = 1;
     term.c_cc[VTIME] = 0;
 
-    #[cfg(target_os = macos)]
+    #[cfg(target_os = "macos")]
     {
         term.c_cc[VDSUSP] = 25;
         term.c_cc[VSTATUS] = 20;
@@ -111,13 +112,12 @@ fn fork<T: Fn(i32,i32) -> Result<()>>(
 
 
     // TODO fill in remaining implementation
-
-    let pty = unsafe { String::from(CStr::from_ptr(ptsname(master)).to_str()?) };
+    let pty = unsafe { ptsname(fd)? };
     return Ok(IUnixProcess {fd, pid, pty});
 
 }
 
-#[napi]
+//#[napi]
 fn open(cols: u16, rows: u16) -> Result<IUnixOpenProcess> {
     let winp = winsize {
         ws_col: cols, ws_row: rows,
@@ -125,17 +125,18 @@ fn open(cols: u16, rows: u16) -> Result<IUnixOpenProcess> {
     };
     let (master, slave) = pty_openpty(winp, None, None)?;
 
-    if (pty_nonblock(master) == -1) { Err("Could not set master fd to nonblocking.") }
-    if (pty_nonblock(slave) == -1) { Err("Could not set slave fd to nonblocking.") }
+    if pty_nonblock(master) == -1 { Err("Could not set master fd to nonblocking.") }
+    if pty_nonblock(slave) == -1 { Err("Could not set slave fd to nonblocking.") }
     
     // Takes the result from ptsname and converts it to a string for easy serialization
-    let pty = unsafe { String::from(CStr::from_ptr(ptsname(master)).to_str()?) };
+    let pty = unsafe { ptsname(master)? };
     return Ok(IUnixOpenProcess {master, slave, pty});
 }
 
-#[napi]
+//#[napi]
 fn process(fd: i32, tty: String) -> Option<String> {
-    if (tty.is_empty()) {return None; }
+    // TODO do we want to replace this with a result and throw an error instead?
+    if tty.is_empty() {return None; }
     let name = pty_getproc(fd, tty);
     match name {
         Ok(name) => todo!(),
@@ -143,7 +144,7 @@ fn process(fd: i32, tty: String) -> Option<String> {
     }
 }
 
-#[napi]
+//#[napi]
 fn resize(fd: i32, cols: i32, rows: i32) -> Result<()>{
     let winp = winsize {
         ws_col: cols, ws_row: rows,
@@ -170,9 +171,9 @@ fn pty_execvpe(file: String, argv: *const *const i8, envp: *const *const i8) -> 
 
 /// Nonblocking FD
 fn pty_nonblock(fd: i32) -> Result<()> {
-    let flags = fcntl(fd, GetLock, 0)?;
-    if (flags == -1) { return -1; }
-    return fcntl(fd, SetLock, flags | O_NONBLOCK);
+    let flags = fcntl(fd, F_GETFL, 0)?;
+    if flags == -1 { return -1; }
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
 /// pty_waitpid
@@ -194,33 +195,35 @@ fn pty_after_close() {
 }
 
 /// Taken from: tmux (http://tmux.sourceforge.net/)
+#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_os = "linux"))]
 fn pty_getproc(fd: i32, tty: String) -> Result<String> {
     return Err(());
 }
 
 /// Taken from: tmux (http://tmux.sourceforge.net/)
-#[cfg(target_os = linux)]
+#[cfg(target_os = "linux")]
 fn pty_getproc(fd: i32, tty: String) -> Result<String> {
-    let pgrp: pid_t;
     let f: *mut FILE;
     let mut path =  Vec::new();
-    unsafe { pgrp = tcgetpgrp(fd); }
-    if (!pgrp) { return None; }
+    let pgrp = tcgetpgrp(fd)?;
+    if !pgrp { return None; }
     // TODO check if this produces correct string
     write!(&path, "/proc/{}/cmdline", pgrp);
-    if (path.is_empty()) { return None; }
+    if path.is_empty() { return None; }
     return fs::read_to_string(path)?;
 }
 
-#[cfg(target_os = macos)]
+#[cfg(target_os = "macos")]
 fn pty_getproc(fd: i32, tty: String) -> Result<String> {
+
     let mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, 0];
     let kp: *mut ::c_void;
     let size = size_of(kp);
-    unsafe { mib[3] = tcgetpgrp(fd); }
-    if (mib[3] == -1) { return Err(()); }
-    let ctlRes = unsafe { sysctl(mib, 4, &kp, &size, NULL, 0) };
-    if (ctlRes == -1) { return  Err(()); }
+    mib[3] = tcgetpgrp(fd)?;
+    if mib[3] == -1 { return Err(()); }
+    let ctlRes = unsafe { sysctl(mib, 4, &kp, &size, null(), 0) };
+    if ctlRes == -1 { return  Err(()); }
     //if ((size != sizeof(kp)) || kp);
     // TODO complete implementation
     return Ok();

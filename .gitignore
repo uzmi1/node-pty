@@ -12,8 +12,9 @@ package-lock.json
 fixtures/space folder/
 .vscode/settings.json
 .vscode/ipch/
+.idea
 
 
-# Added by cargo
-
+# Rust stuff
 /target
+/*.node

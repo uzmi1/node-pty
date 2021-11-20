@@ -4,23 +4,14 @@
  * Copyright (c) 2018, Microsoft Corporation (MIT License).
  */
 import * as net from 'net';
+import * as path from 'path';
 import { Terminal, DEFAULT_COLS, DEFAULT_ROWS } from './terminal';
 import { IProcessEnv, IPtyForkOptions, IPtyOpenOptions } from './interfaces';
 import { ArgvOrCommandLine } from './types';
 import { assign } from './utils';
+import { loadBinding } from '@node-rs/helper';
 
-let pty: IUnixNative;
-try {
-  pty = require('../build/Release/pty.node');
-} catch (outerError) {
-  try {
-    pty = require('../build/Debug/pty.node');
-  } catch (innerError) {
-    console.error('innerError', innerError);
-    // Re-throw the exception from the Release require if the Debug require fails as well
-    throw outerError;
-  }
-}
+const pty: IUnixNative = loadBinding(path.join(__dirname, '..'), 'node-pty', 'node-pty');
 
 const DEFAULT_FILE = 'sh';
 const DEFAULT_NAME = 'xterm';
@@ -282,6 +273,8 @@ export class UnixTerminal extends Terminal {
     delete env['COLUMNS'];
     delete env['LINES'];
   }
+
+  static readonly native = pty;
 }
 
 /**

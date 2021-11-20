@@ -45,7 +45,7 @@ export function open(options: IPtyOpenOptions): ITerminal {
 }
 
 /**
- * Expose the native API when not Windows, note that this is not public API and
- * could be removed at any time.
+ * Expose the native API, available only in Unix.
+ * Note that this is not public API and could be removed at any time.
  */
-export const native = (process.platform !== 'win32' ? require('../build/Release/pty.node') : null);
+export const native = terminalCtor.native;

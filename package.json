@@ -8,6 +8,9 @@
   "license": "MIT",
   "main": "./lib/index.js",
   "types": "./typings/node-pty.d.ts",
+  "napi": {
+    "name": "node-pty"
+  },
   "repository": {
     "type": "git",
     "url": "git://github.com/microsoft/node-pty.git"
@@ -35,7 +38,7 @@
     "build": "tsc -b ./src/tsconfig.json",
     "watch": "tsc -b -w ./src/tsconfig.json",
     "lint": "eslint -c .eslintrc.js --ext .ts src/",
-    "install": "napi build --release",
+    "install": "napi build --platform --release",
     "postinstall": "node scripts/post-install.js",
     "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
     "posttest": "npm run lint",

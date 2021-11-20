@@ -1,7 +1,7 @@
 mod unix;
 
-#[macro_use]
-extern crate napi;
+//#[macro_use]
+//extern crate napi;
 #[macro_use]
 extern crate napi_derive;
 #[macro_use]

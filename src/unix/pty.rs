@@ -14,7 +14,8 @@ use nix::sys::signal::Signal;
 use nix::libc::*;
 use nix::libc::openpty;
 
-use napi::Result;
+use napi::{Result, JsFunction};
+use napi::threadsafe_function::{ThreadSafeCallContext, ThreadsafeFunctionCallMode, ErrorStrategy};
 //use napi::bindgen_prelude::*;
 use nix::errno::Errno;
 use nix::unistd::chdir;
@@ -39,12 +40,12 @@ struct IUnixOpenProcess {
 }
 
 #[napi]
-fn fork<T: Fn(i32,i32) -> Result<()>>(
+fn fork(
   file: String, args: Vec<String>,
   env: Vec<String>, cwd: String,
   cols: i32, rows: i32,
   uid: i32, gid: i32,
-  utf8: bool, _onexit: T) -> napi::Result<IUnixProcess> {
+  utf8: bool, onexit: JsFunction) -> napi::Result<IUnixProcess> {
 
   //
   let mut newmask: sigset_t = 0;
@@ -148,19 +149,15 @@ fn fork<T: Fn(i32,i32) -> Result<()>>(
           if setuid(uid as u32) == -1 { panic!("setuid(2) failed."); }
         }
         // Prepare char *argv[]: [file, ...args, null]
-        let mut argv = Vec::<*const i8>::with_capacity(args.len() + 2);
-        argv.push(CString::new(file.clone())?.as_ptr());
-        for arg in args {
-          argv.push(CString::new(arg.clone())?.as_ptr());
-        }
-        argv.push(null());
+        let cargs = vec![&file].into_iter().chain(args.iter())
+            .map(|s| { cstr_unsafe(s.clone()) })
+            .collect::<Vec<_>>();
+        let argv = nul_terminated(&cargs);
 
         // Prepare char *envv[]: [...env, null]
-        let mut envv = Vec::<*const i8>::with_capacity(env.len() + 1);
-        for envvar in env {
-          envv.push(CString::new(envvar.clone())?.as_ptr());
-        }
-        envv.push(null());
+        let cenv = env.iter().map(|s| { cstr_unsafe(s.clone()) })
+            .collect::<Vec<_>>();
+        let envv = nul_terminated(&cenv);
 
         pty_execvpe(CString::new(file)?.as_ptr(), argv.as_ptr(), envv.as_ptr());
 
@@ -168,13 +165,35 @@ fn fork<T: Fn(i32,i32) -> Result<()>>(
       }
     },
     _ => {
-      //pty_nonblock(master)?;
-      //uv_async_init
+      // @todo pty_nonblock(master)?;
+
+      let tsfn = onexit.create_threadsafe_function(0,
+        |ctx: ThreadSafeCallContext<(u32,u32)>| {
+          // convert tuple to vec of size 2. @todo better way via serde?
+          ctx.env.create_uint32(ctx.value.0).and_then(|v0| {
+            ctx.env.create_uint32(ctx.value.1).map(|v1| { vec![v0, v1] })
+          })
+        })?;
+
+      std::thread::spawn(move || {
+        let rc = unsafe { pty_waitpid(pid) };
+        //std::thread::sleep(std::time::Duration::from_millis(1000));
+        tsfn.call(Ok(rc), ThreadsafeFunctionCallMode::Blocking);
+      });
     }
   };
 
   let pty = unsafe { pty_ptsname(master).expect("ptsname failed") };
   return Ok(IUnixProcess {fd: master, pid, pty});
+}
+
+fn cstr_unsafe(s: String) -> CString {
+  CString::new(s).expect("CString::new failed")
+}
+
+fn nul_terminated(arr: &Vec<CString>) -> Vec<*const c_char> {
+  arr.iter().map(|s| { s.as_ptr() })
+      .chain(vec![null()].into_iter()).collect::<Vec<_>>()
 }
 
 /// Passes the call to the unsafe function forkpty
@@ -211,6 +230,24 @@ unsafe fn pty_execvpe(file: *const i8, argv: *const *const i8, envp: *const *con
     #[cfg(not(target_os = "macos"))] { environ = environ; }
   }*/
   return execvp(file, argv);
+}
+
+unsafe fn pty_waitpid(pid: pid_t) -> (u32, u32) {
+  let mut stat_loc: c_int = 0;
+  let ret = waitpid(pid, &mut stat_loc, 0);
+  match ret {
+    -1 => {
+      match Errno::last() {
+        Errno::EINTR => pty_waitpid(pid),
+        Errno::ECHILD => (0, 0),
+        _ => panic!("waitpid(3): unexpected error")
+      }
+    },
+    _ => {
+      (if WIFEXITED(stat_loc) { WEXITSTATUS(stat_loc) as u32 } else { 0 },
+       if WIFSIGNALED(stat_loc) { WTERMSIG(stat_loc) as u32 } else { 0 })
+    }
+  }
 }
 
 #[napi]

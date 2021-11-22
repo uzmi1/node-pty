@@ -165,9 +165,9 @@ fn fork(
       }
     },
     _ => {
-      // @todo pty_nonblock(master)?;
+      unsafe { pty_nonblock(master)?; }
 
-      let tsfn = onexit.create_threadsafe_function(0,
+      let tsfn = onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
         |ctx: ThreadSafeCallContext<(u32,u32)>| {
           // convert tuple to vec of size 2. @todo better way via serde?
           ctx.env.create_uint32(ctx.value.0).and_then(|v0| {
@@ -178,7 +178,7 @@ fn fork(
       std::thread::spawn(move || {
         let rc = unsafe { pty_waitpid(pid) };
         //std::thread::sleep(std::time::Duration::from_millis(1000));
-        tsfn.call(Ok(rc), ThreadsafeFunctionCallMode::Blocking);
+        tsfn.call(rc, ThreadsafeFunctionCallMode::Blocking);
       });
     }
   };
@@ -223,13 +223,29 @@ unsafe fn pty_ptsname(master: c_int) -> nix::Result<String> {
 /// execvpe(3) is not portable.
 /// http://www.gnu.org/software/gnulib/manual/html_node/execvpe.html
 unsafe fn pty_execvpe(file: *const i8, argv: *const *const i8, envp: *const *const i8) -> i32 {
-  /* @todo set environ from envp */
-  /*unsafe {
-    let environ: *mut *mut *mut c_char;
-    #[cfg(target_os = "macos")] { environ = _NSGetEnviron(); }
-    #[cfg(not(target_os = "macos"))] { environ = environ; }
-  }*/
+  /* this is the hackiest, but that's what used to be in the C++ implementation */
+  extern "C" {
+    static mut environ: *const *const i8;
+  }
+  environ = envp;
+  /* suggestion: pass envp as Vec<String> and use
+   *   nix::env::clearenv();
+   *   std::env::setenv(...);
+   * also, optimization: change `unixTerminal.ts` to pass `undefined` in case
+   * an `env` option is not set. And then, in this case, skip this charade
+   * altogether.
+   */
   return execvp(file, argv);
+}
+
+unsafe fn pty_nonblock(fd: c_int) -> Result<c_int> {
+  match fcntl(fd, F_GETFL, 0) {
+    -1 => return err!("failed to set nonblocking mode (fcntl(F_GETFL) failed)"),
+    flags => match fcntl(fd, F_SETFL, flags | O_NONBLOCK) {
+      -1 => return err!("failed to set nonblocking mode (fcntl(F_SETFL) failed)"),
+      rc => Ok(rc)
+    }
+  }
 }
 
 unsafe fn pty_waitpid(pid: pid_t) -> (u32, u32) {

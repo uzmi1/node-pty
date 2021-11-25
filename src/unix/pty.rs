@@ -141,12 +141,12 @@ fn fork(
     0 => {
       unsafe {
         if !cwd.is_empty() {
-          if chdir(cwd.as_str()).is_err() { panic!("chdir(2) failed."); }
+          if chdir(cwd.as_str()).is_err() { child_panic("chdir(2) failed"); }
         }
 
         if uid != -1 && gid != -1 {
-          if setgid(gid as u32) == -1 { panic!("setgid(2) failed."); }
-          if setuid(uid as u32) == -1 { panic!("setuid(2) failed."); }
+          if setgid(gid as u32) == -1 { child_panic("setgid(2) failed"); }
+          if setuid(uid as u32) == -1 { child_panic("setuid(2) failed"); }
         }
         // Prepare char *argv[]: [file, ...args, null]
         let cargs = vec![&file].into_iter().chain(args.iter())
@@ -161,7 +161,7 @@ fn fork(
 
         pty_execvpe(CString::new(file)?.as_ptr(), argv.as_ptr(), envv.as_ptr());
 
-        panic!("execvp(3) failed.")
+        child_panic("execvp(3) failed");
       }
     },
     _ => {
@@ -190,10 +190,20 @@ fn fork(
 fn cstr_unsafe(s: String) -> CString {
   CString::new(s).expect("CString::new failed")
 }
+fn cstr_unsafe_(s: &str) -> CString {
+  CString::new(s).expect("CString::new failed")
+}
 
 fn nul_terminated(arr: &Vec<CString>) -> Vec<*const c_char> {
   arr.iter().map(|s| { s.as_ptr() })
       .chain(vec![null()].into_iter()).collect::<Vec<_>>()
+}
+
+fn child_panic(s: &str) {
+  unsafe {
+    perror(cstr_unsafe_(s).as_ptr());
+    exit(1);
+  }
 }
 
 /// Passes the call to the unsafe function forkpty

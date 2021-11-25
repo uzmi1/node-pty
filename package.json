@@ -20,7 +20,11 @@
     "scripts/",
     "src/",
     "deps/",
-    "typings/"
+    "typings/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    "node-pty.*.node"
   ],
   "homepage": "https://github.com/microsoft/node-pty",
   "bugs": {
@@ -38,7 +42,7 @@
     "build": "tsc -b ./src/tsconfig.json",
     "watch": "tsc -b -w ./src/tsconfig.json",
     "lint": "eslint -c .eslintrc.js --ext .ts src/",
-    "install": "napi build --platform --release",
+    "install": "npx -y -p @napi-rs/cli napi build --platform --release",
     "postinstall": "node scripts/post-install.js",
     "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
     "posttest": "npm run lint",

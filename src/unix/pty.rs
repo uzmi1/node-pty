@@ -6,7 +6,7 @@ use std::io::Write;
 use std::process::Command;
 use std::ptr::{null, null_mut};
 
-use nix::libc::{O_NONBLOCK, TIOCSWINSZ, CTL_KERN, KERN_PROC, KERN_PROC_PID, winsize};
+use nix::libc::{O_NONBLOCK, TIOCSWINSZ, winsize};
 use nix::libc::{B38400};
 use nix::libc::{sigfillset, ioctl, sysctl, forkpty, fcntl, termios};
 use nix::libc::{cfsetispeed, cfsetospeed};
@@ -48,17 +48,13 @@ fn fork(
   utf8: bool, onexit: JsFunction) -> napi::Result<IUnixProcess> {
 
   //
-  let mut newmask: sigset_t = 0;
-  let mut oldmask: sigset_t = 0;
+  let mut newmask: sigset_t = unsafe { std::mem::zeroed() };
+  let mut oldmask: sigset_t = unsafe { std::mem::zeroed() };
   //
-  let mut sig_action = sigaction {
-    sa_sigaction: SIG_DFL,
-    sa_mask: 0,
-    sa_flags: 0
-  };
+  let mut sig_action = mk_sigaction();
 
   // Terminal window size
-  let winp = winsize {
+  let mut winp = winsize {
     ws_col: cols as u16, ws_row: rows as u16,
     ws_xpixel: 0, ws_ypixel: 0
   };
@@ -66,15 +62,12 @@ fn fork(
   // Create a new termios with default flags.
   // For more info on termios settings:
   // https://man7.org/linux/man-pages/man3/termios.3.html
-  let mut term = termios {
-    c_iflag: ICRNL | IXON | IXANY | IMAXBEL | BRKINT,
-    c_oflag: OPOST | ONLCR,
-    c_cflag: CREAD | CS8 | HUPCL,
-    c_lflag: ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK | ECHOKE | ECHOCTL,
-    c_cc: Default::default(),
-    c_ispeed: Default::default(),
-    c_ospeed: Default::default()
-  };
+  let mut term: termios = unsafe { std::mem::zeroed() };
+  // (Cannot use struct initializer because different *nixes have different fields)
+  term.c_iflag = ICRNL | IXON | IXANY | IMAXBEL | BRKINT;
+  term.c_oflag = OPOST | ONLCR;
+  term.c_cflag = CREAD | CS8 | HUPCL;
+  term.c_lflag = ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK | ECHOKE | ECHOCTL;
 
   // Enable utf8 support if requested
   if utf8 { term.c_iflag |= IUTF8; }
@@ -119,7 +112,7 @@ fn fork(
 
   // Forks and then assigns a pointer to the fork file descriptor to master
   let mut master: i32 = -1;
-  let pid = pty_forkpty(&mut master, term, winp);
+  let pid = unsafe { forkpty(&mut master, null_mut(), &mut term, &mut winp) };
 
   if pid == 0 {
     // remove all signal handlers from child
@@ -206,19 +199,6 @@ fn child_panic(s: &str) {
   }
 }
 
-/// Passes the call to the unsafe function forkpty
-#[cfg(target_os = "macos")]
-fn pty_forkpty(master: &mut i32, mut termp: termios, mut winp: winsize) -> i32 {
-  unsafe {
-    forkpty(
-      master,
-      null_mut::<c_char>(),
-      &mut termp,
-      &mut winp
-    )
-  }
-}
-
 /// Get's the name of the terminal pointed to by the given file descriptor
 unsafe fn pty_ptsname(master: c_int) -> nix::Result<String> {
   let name_ptr = ptsname(master);
@@ -292,4 +272,23 @@ fn open(cols: u32, rows: u32) -> napi::Result<IUnixOpenProcess> {
   }
 
   return Ok(IUnixOpenProcess {master: amaster, slave: aslave, pty: String::new()});
+}
+
+#[cfg(target_os = "macos")]
+fn mk_sigaction() -> sigaction {
+  sigaction {
+    sa_sigaction: SIG_DFL,
+    sa_mask: unsafe { std::mem::zeroed() },
+    sa_flags: 0
+  }
+}
+
+#[cfg(target_os = "linux")]
+fn mk_sigaction() -> sigaction {
+  sigaction {
+    sa_sigaction: SIG_DFL,
+    sa_mask: unsafe { std::mem::zeroed() },
+    sa_flags: 0,
+    sa_restorer: None
+  }
 }

@@ -8,35 +8,24 @@
  *   with pseudo-terminal file descriptors.
  */
 
-// node versions lower than 10 define this as 0x502 which disables many of the definitions needed to compile
-#include <node_version.h>
-#if NODE_MODULE_VERSION <= 57
-  #define _WIN32_WINNT 0x600
-#endif
-
 #include <iostream>
-#include <nan.h>
 #include <Shlwapi.h> // PathCombine, PathIsRelative
 #include <sstream>
 #include <string>
 #include <vector>
 #include <Windows.h>
 #include <strsafe.h>
-#include "path_util.h"
-
-extern "C" void init(v8::Local<v8::Object>);
 
 // Taken from the RS5 Windows SDK, but redefined here in case we're targeting <= 17134
 #ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
 #define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE \
   ProcThreadAttributeValue(22, FALSE, TRUE, FALSE)
+#endif
 
 typedef VOID* HPCON;
 typedef HRESULT (__stdcall *PFNCREATEPSEUDOCONSOLE)(COORD c, HANDLE hIn, HANDLE hOut, DWORD dwFlags, HPCON* phpcon);
 typedef HRESULT (__stdcall *PFNRESIZEPSEUDOCONSOLE)(HPCON hpc, COORD newSize);
 typedef void (__stdcall *PFNCLOSEPSEUDOCONSOLE)(HPCON hpc);
-
-#endif
 
 struct pty_baton {
   int id;
@@ -46,9 +35,9 @@ struct pty_baton {
 
   HANDLE hShell;
   HANDLE hWait;
-  Nan::Callback cb;
-  uv_async_t async;
-  uv_thread_t tid;
+  //Nan::Callback cb;
+  //uv_async_t async;
+  //uv_thread_t tid;
 
   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
 };
@@ -71,6 +60,7 @@ std::vector<T> vectorFromString(const std::basic_string<T> &str) {
     return std::vector<T>(str.begin(), str.end());
 }
 
+#if 0
 void throwNanError(const Nan::FunctionCallbackInfo<v8::Value>* info, const char* text, const bool getLastError) {
   std::stringstream errorText;
   errorText << text;
@@ -80,6 +70,7 @@ void throwNanError(const Nan::FunctionCallbackInfo<v8::Value>* info, const char*
   Nan::ThrowError(errorText.str().c_str());
   (*info).GetReturnValue().SetUndefined();
 }
+#endif
 
 // Returns a new server named pipe.  It has not yet been connected.
 bool createDataServerPipe(bool write,
@@ -108,6 +99,13 @@ bool createDataServerPipe(bool write,
       &sa);
 
   return *hServer != INVALID_HANDLE_VALUE;
+}
+
+WCHAR *handoff(const std::wstring& ws) {
+  size_t sz = sizeof(WCHAR) * (ws.size() + 1);
+  WCHAR *pws = (WCHAR*)malloc(sz);
+  memcpy(pws, ws.c_str(), sz);
+  return pws;
 }
 
 HRESULT CreateNamedPipesAndPseudoConsole(COORD size,
@@ -157,6 +155,31 @@ HRESULT CreateNamedPipesAndPseudoConsole(COORD size,
   return HRESULT_FROM_WIN32(GetLastError());
 }
 
+extern "C"
+HRESULT CreateNamedPipesAndPseudoConsole(uint32_t cols, uint32_t rows,
+                                         DWORD dwFlags,
+                                         WCHAR *ppipeName,
+                                         void **phIn, WCHAR **pinName,
+                                         void **phOut, WCHAR **poutName) {
+  HANDLE hIn, hOut;
+  HPCON hpc;
+  std::wstring inName, outName, pipeName(ppipeName);
+  HRESULT hr = CreateNamedPipesAndPseudoConsole({(SHORT)cols, (SHORT)rows},
+                                                dwFlags,
+                                                &hIn, &hOut, &hpc, inName, outName, pipeName);
+
+  printf("hIn=%p, hOut=%p, hpc=%p\n", hIn, hOut, hpc);
+  std::wcout << inName << "; " << outName << std::endl;
+
+  *phIn = hIn;
+  *pinName = handoff(inName);
+  *phOut = hOut;
+  *poutName = handoff(outName);
+
+  return hr;
+}
+
+#if 0
 static NAN_METHOD(PtyStartProcess) {
   Nan::HandleScope scope;
 
@@ -453,3 +476,4 @@ extern "C" void init(v8::Local<v8::Object> target) {
 };
 
 NODE_MODULE(pty, init);
+#endif

@@ -81,7 +81,7 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number = 
         if (tries * intervalMs >= timeoutMs) {
           clearInterval(interval);
           assert.fail(`Bad process state, expected: ${size}, actual: ${list.length}`);
-          resolve();
+          resolve(null);
         }
       });
     }, intervalMs);

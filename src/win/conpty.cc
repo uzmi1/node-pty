@@ -170,9 +170,6 @@ HRESULT CreateNamedPipesAndPseudoConsole(uint32_t cols, uint32_t rows,
                                                 dwFlags,
                                                 &hIn, &hOut, &hpc, inName, outName, pipeName);
 
-  printf("hIn=%p, hOut=%p, hpc=%p\n", hIn, hOut, hpc);
-  std::wcout << inName << "; " << outName << std::endl;
-
   if (SUCCEEDED(hr)) {
     const int ptyId = InterlockedIncrement(&ptyCounter);
     ptyHandles.insert(ptyHandles.end(), new pty_baton(ptyId, hIn, hOut, hpc));
@@ -321,7 +318,7 @@ static NAN_METHOD(PtyConnect) {
   const v8::Local<v8::Function> exitCallback = v8::Local<v8::Function>::Cast(info[4]);
 #endif
 
-int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring env) {
+int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd, const std::wstring& env) {
   // Prepare command line
   std::unique_ptr<wchar_t[]> mutableCommandline = std::make_unique<wchar_t[]>(cmdline.length() + 1);
   HRESULT hr = StringCchCopyW(mutableCommandline.get(), cmdline.length() + 1, cmdline.c_str());
@@ -331,17 +328,6 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
   hr = StringCchCopyW(mutableCwd.get(), cwd.length() + 1, cwd.c_str());
 
   // Prepare environment
-  /*
-  std::wstring env;
-  if (!envValues.IsEmpty()) {
-    std::wstringstream envBlock;
-    for (uint32_t i = 0; i < envValues->Length(); i++) {
-      std::wstring envValue(path_util::to_wstring(Nan::Utf8String(Nan::Get(envValues, i).ToLocalChecked())));
-      envBlock << envValue << L'\0';
-    }
-    envBlock << L'\0';
-    env = envBlock.str();
-  }*/
   auto envV = vectorFromString(env);
   LPWSTR envArg = envV.empty() ? nullptr : envV.data();
 
@@ -352,7 +338,7 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
   success = ConnectNamedPipe(handle->hOut, nullptr);
 
   // Attach the pseudoconsole to the client application we're creating
-  STARTUPINFOEXW siEx;
+  STARTUPINFOEXW siEx{0};
   siEx.StartupInfo.cb = sizeof(STARTUPINFOEXW);
   siEx.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
   siEx.StartupInfo.hStdError = nullptr;
@@ -361,6 +347,7 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
 
   SIZE_T size = 0;
   InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+
   BYTE *attrList = new BYTE[size];
   siEx.lpAttributeList = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attrList);
 
@@ -368,6 +355,7 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
   if (!success) {
     return -1; // throwNanError(&info, "InitializeProcThreadAttributeList failed", true);
   }
+
   success = UpdateProcThreadAttribute(siEx.lpAttributeList,
                                        0,
                                        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
@@ -375,6 +363,7 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
                                        sizeof(HPCON),
                                        NULL,
                                        NULL);
+
   if (!success) {
     return -2; // throwNanError(&info, "UpdateProcThreadAttribute failed", true);
   }
@@ -392,6 +381,7 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
           &siEx.StartupInfo,            // lpStartupInfo
           &piClient                     // lpProcessInformation
   );
+
   if (!success) {
     return -3; // throwNanError(&info, "Cannot create process", true);
   }
@@ -417,11 +407,18 @@ int32_t PtyConnect(int id, std::wstring cmdline, std::wstring cwd, std::wstring 
 }
 #endif
 
+size_t envlen(const char *env) {
+  size_t i = 0;
+  while (!(env[i] == 0 && env[i+1] == 0)) i++;
+  return i + 2;
+}
+
 extern "C"
 int32_t PtyConnect(int id, const char *cmdline, const char *cwd, const char *env) {
   std::wstring wcmdline(cmdline, cmdline + strlen(cmdline));
   std::wstring wcwd(cwd, cwd + strlen(cwd));
-  std::wstring wenv(env, env + strlen(env));
+  std::wstring wenv(env, env + envlen(env));
+
   return PtyConnect(id, wcmdline, wcwd, wenv);
 }
 

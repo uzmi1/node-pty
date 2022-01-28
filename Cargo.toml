@@ -17,7 +17,9 @@ serde_derive = "1"
 nix = "0.23.0"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["winuser", "winerror"] }
+winapi = { version = "0.3.9", features = [
+    "winuser", "winerror", "winbase", "winnt", "processthreadsapi"
+] }
 cty = "0.2.2"
 widestring = "0.5.1"
 

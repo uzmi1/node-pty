@@ -8,6 +8,7 @@
  *   with pseudo-terminal file descriptors.
  */
 
+#include <cassert>
 #include <iostream>
 #include <Shlwapi.h> // PathCombine, PathIsRelative
 #include <sstream>
@@ -34,8 +35,8 @@ struct pty_baton {
   HANDLE hOut;
   HPCON hpc;
 
-  HANDLE hShell;
-  HANDLE hWait;
+  //HANDLE hShell;
+  //HANDLE hWait;
   //Nan::Callback cb;
   //uv_async_t async;
   //uv_thread_t tid;
@@ -318,14 +319,17 @@ static NAN_METHOD(PtyConnect) {
   const v8::Local<v8::Function> exitCallback = v8::Local<v8::Function>::Cast(info[4]);
 #endif
 
-int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd, const std::wstring& env) {
+int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd, const std::wstring& env,
+                   HANDLE& hProcess) {
   // Prepare command line
   std::unique_ptr<wchar_t[]> mutableCommandline = std::make_unique<wchar_t[]>(cmdline.length() + 1);
   HRESULT hr = StringCchCopyW(mutableCommandline.get(), cmdline.length() + 1, cmdline.c_str());
+  assert(SUCCEEDED(hr));
 
   // Prepare cwd
   std::unique_ptr<wchar_t[]> mutableCwd = std::make_unique<wchar_t[]>(cwd.length() + 1);
   hr = StringCchCopyW(mutableCwd.get(), cwd.length() + 1, cwd.c_str());
+  assert(SUCCEEDED(hr));
 
   // Prepare environment
   auto envV = vectorFromString(env);
@@ -334,8 +338,9 @@ int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd,
   // Fetch pty handle from ID and start process
   pty_baton *handle = get_pty_baton(id);
 
-  BOOL success = ConnectNamedPipe(handle->hIn, nullptr);
-  success = ConnectNamedPipe(handle->hOut, nullptr);
+  BOOL success = ConnectNamedPipe(handle->hIn, nullptr) &&
+                 ConnectNamedPipe(handle->hOut, nullptr);
+  assert(success);
 
   // Attach the pseudoconsole to the client application we're creating
   STARTUPINFOEXW siEx{0};
@@ -387,7 +392,7 @@ int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd,
   }
 
   // Update handle
-  handle->hShell = piClient.hProcess;
+  //handle->hShell = piClient.hProcess;
   //handle->cb.Reset(exitCallback);
   //handle->async.data = handle;
 
@@ -397,6 +402,7 @@ int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd,
   // Setup Windows wait for process exit event
   //RegisterWaitForSingleObject(&handle->hWait, piClient.hProcess, OnProcessExitWinEvent, (PVOID)handle, INFINITE, WT_EXECUTEONLYONCE);
 
+  hProcess = piClient.hProcess;
   return piClient.dwProcessId;
 }
 #if 0
@@ -414,12 +420,12 @@ size_t envlen(const char *env) {
 }
 
 extern "C"
-int32_t PtyConnect(int id, const char *cmdline, const char *cwd, const char *env) {
+int32_t PtyConnect(int id, const char *cmdline, const char *cwd, const char *env, HANDLE &hProcess) {
   std::wstring wcmdline(cmdline, cmdline + strlen(cmdline));
   std::wstring wcwd(cwd, cwd + strlen(cwd));
   std::wstring wenv(env, env + envlen(env));
 
-  return PtyConnect(id, wcmdline, wcwd, wenv);
+  return PtyConnect(id, wcmdline, wcwd, wenv, hProcess);
 }
 
 #if 0

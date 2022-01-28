@@ -8,6 +8,6 @@ fn main() {
   {
     cc::Build::new()
         .file("src/win/conpty.cc")
-        .compile("conpty.lib");
+        .compile("conpty");
   }
 }

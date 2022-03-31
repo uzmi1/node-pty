@@ -1,4 +1,7 @@
+#[cfg(target_family = "unix")]
 mod unix;
+#[cfg(target_family = "windows")]
+mod win;
 
 //#[macro_use]
 //extern crate napi;

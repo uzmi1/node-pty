@@ -8,35 +8,26 @@
  *   with pseudo-terminal file descriptors.
  */
 
-// node versions lower than 10 define this as 0x502 which disables many of the definitions needed to compile
-#include <node_version.h>
-#if NODE_MODULE_VERSION <= 57
-  #define _WIN32_WINNT 0x600
-#endif
-
+#include <cassert>
 #include <iostream>
-#include <nan.h>
 #include <Shlwapi.h> // PathCombine, PathIsRelative
 #include <sstream>
 #include <string>
 #include <vector>
+#include <memory>
 #include <Windows.h>
 #include <strsafe.h>
-#include "path_util.h"
-
-extern "C" void init(v8::Local<v8::Object>);
 
 // Taken from the RS5 Windows SDK, but redefined here in case we're targeting <= 17134
 #ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
 #define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE \
   ProcThreadAttributeValue(22, FALSE, TRUE, FALSE)
+#endif
 
 typedef VOID* HPCON;
 typedef HRESULT (__stdcall *PFNCREATEPSEUDOCONSOLE)(COORD c, HANDLE hIn, HANDLE hOut, DWORD dwFlags, HPCON* phpcon);
 typedef HRESULT (__stdcall *PFNRESIZEPSEUDOCONSOLE)(HPCON hpc, COORD newSize);
 typedef void (__stdcall *PFNCLOSEPSEUDOCONSOLE)(HPCON hpc);
-
-#endif
 
 struct pty_baton {
   int id;
@@ -44,11 +35,11 @@ struct pty_baton {
   HANDLE hOut;
   HPCON hpc;
 
-  HANDLE hShell;
-  HANDLE hWait;
-  Nan::Callback cb;
-  uv_async_t async;
-  uv_thread_t tid;
+  //HANDLE hShell;
+  //HANDLE hWait;
+  //Nan::Callback cb;
+  //uv_async_t async;
+  //uv_thread_t tid;
 
   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
 };
@@ -71,6 +62,7 @@ std::vector<T> vectorFromString(const std::basic_string<T> &str) {
     return std::vector<T>(str.begin(), str.end());
 }
 
+#if 0
 void throwNanError(const Nan::FunctionCallbackInfo<v8::Value>* info, const char* text, const bool getLastError) {
   std::stringstream errorText;
   errorText << text;
@@ -80,6 +72,7 @@ void throwNanError(const Nan::FunctionCallbackInfo<v8::Value>* info, const char*
   Nan::ThrowError(errorText.str().c_str());
   (*info).GetReturnValue().SetUndefined();
 }
+#endif
 
 // Returns a new server named pipe.  It has not yet been connected.
 bool createDataServerPipe(bool write,
@@ -108,6 +101,13 @@ bool createDataServerPipe(bool write,
       &sa);
 
   return *hServer != INVALID_HANDLE_VALUE;
+}
+
+WCHAR *handoff(const std::wstring& ws) {
+  size_t sz = sizeof(WCHAR) * (ws.size() + 1);
+  WCHAR *pws = (WCHAR*)malloc(sz);
+  memcpy(pws, ws.c_str(), sz);
+  return pws;
 }
 
 HRESULT CreateNamedPipesAndPseudoConsole(COORD size,
@@ -157,6 +157,35 @@ HRESULT CreateNamedPipesAndPseudoConsole(COORD size,
   return HRESULT_FROM_WIN32(GetLastError());
 }
 
+extern "C"
+HRESULT CreateNamedPipesAndPseudoConsole(uint32_t cols, uint32_t rows,
+                                         DWORD dwFlags,
+                                         WCHAR *ppipeName,
+                                         int *pptyId,
+                                         void **phIn, WCHAR **pinName,
+                                         void **phOut, WCHAR **poutName) {
+  HANDLE hIn, hOut;
+  HPCON hpc;
+  std::wstring inName, outName, pipeName(ppipeName);
+  HRESULT hr = CreateNamedPipesAndPseudoConsole({(SHORT) cols, (SHORT) rows},
+                                                dwFlags,
+                                                &hIn, &hOut, &hpc, inName, outName, pipeName);
+
+  if (SUCCEEDED(hr)) {
+    const int ptyId = InterlockedIncrement(&ptyCounter);
+    ptyHandles.insert(ptyHandles.end(), new pty_baton(ptyId, hIn, hOut, hpc));
+
+    *pptyId = ptyId;
+    *phIn = hIn;
+    *pinName = handoff(inName);
+    *phOut = hOut;
+    *poutName = handoff(outName);
+  }
+
+  return hr;
+}
+
+#if 0
 static NAN_METHOD(PtyStartProcess) {
   Nan::HandleScope scope;
 
@@ -288,34 +317,30 @@ static NAN_METHOD(PtyConnect) {
   const std::wstring cwd(path_util::to_wstring(Nan::Utf8String(info[2])));
   const v8::Local<v8::Array> envValues = info[3].As<v8::Array>();
   const v8::Local<v8::Function> exitCallback = v8::Local<v8::Function>::Cast(info[4]);
+#endif
 
+int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd, const std::wstring& env,
+                   HANDLE& hProcess) {
   // Prepare command line
   std::unique_ptr<wchar_t[]> mutableCommandline = std::make_unique<wchar_t[]>(cmdline.length() + 1);
   HRESULT hr = StringCchCopyW(mutableCommandline.get(), cmdline.length() + 1, cmdline.c_str());
+  assert(SUCCEEDED(hr));
 
   // Prepare cwd
   std::unique_ptr<wchar_t[]> mutableCwd = std::make_unique<wchar_t[]>(cwd.length() + 1);
   hr = StringCchCopyW(mutableCwd.get(), cwd.length() + 1, cwd.c_str());
+  assert(SUCCEEDED(hr));
 
   // Prepare environment
-  std::wstring env;
-  if (!envValues.IsEmpty()) {
-    std::wstringstream envBlock;
-    for(uint32_t i = 0; i < envValues->Length(); i++) {
-      std::wstring envValue(path_util::to_wstring(Nan::Utf8String(Nan::Get(envValues, i).ToLocalChecked())));
-      envBlock << envValue << L'\0';
-    }
-    envBlock << L'\0';
-    env = envBlock.str();
-  }
   auto envV = vectorFromString(env);
   LPWSTR envArg = envV.empty() ? nullptr : envV.data();
 
   // Fetch pty handle from ID and start process
-  pty_baton* handle = get_pty_baton(id);
+  pty_baton *handle = get_pty_baton(id);
 
-  BOOL success = ConnectNamedPipe(handle->hIn, nullptr);
-  success = ConnectNamedPipe(handle->hOut, nullptr);
+  BOOL success = ConnectNamedPipe(handle->hIn, nullptr) &&
+                 ConnectNamedPipe(handle->hOut, nullptr);
+  assert(success);
 
   // Attach the pseudoconsole to the client application we're creating
   STARTUPINFOEXW siEx{0};
@@ -327,57 +352,83 @@ static NAN_METHOD(PtyConnect) {
 
   SIZE_T size = 0;
   InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+
   BYTE *attrList = new BYTE[size];
   siEx.lpAttributeList = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attrList);
 
-  fSuccess = InitializeProcThreadAttributeList(siEx.lpAttributeList, 1, 0, &size);
-  if (!fSuccess) {
-    return throwNanError(&info, "InitializeProcThreadAttributeList failed", true);
+  success = InitializeProcThreadAttributeList(siEx.lpAttributeList, 1, 0, &size);
+  if (!success) {
+    return -1; // throwNanError(&info, "InitializeProcThreadAttributeList failed", true);
   }
-  fSuccess = UpdateProcThreadAttribute(siEx.lpAttributeList,
+
+  success = UpdateProcThreadAttribute(siEx.lpAttributeList,
                                        0,
                                        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                                        handle->hpc,
                                        sizeof(HPCON),
                                        NULL,
                                        NULL);
-  if (!fSuccess) {
-    return throwNanError(&info, "UpdateProcThreadAttribute failed", true);
+
+  if (!success) {
+    return -2; // throwNanError(&info, "UpdateProcThreadAttribute failed", true);
   }
 
   PROCESS_INFORMATION piClient{};
-  fSuccess = !!CreateProcessW(
-      nullptr,
-      mutableCommandline.get(),
-      nullptr,                      // lpProcessAttributes
-      nullptr,                      // lpThreadAttributes
-      false,                        // bInheritHandles VERY IMPORTANT that this is false
-      EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, // dwCreationFlags
-      envArg,                       // lpEnvironment
-      mutableCwd.get(),             // lpCurrentDirectory
-      &siEx.StartupInfo,            // lpStartupInfo
-      &piClient                     // lpProcessInformation
+  success = !!CreateProcessW(
+          nullptr,
+          mutableCommandline.get(),
+          nullptr,                      // lpProcessAttributes
+          nullptr,                      // lpThreadAttributes
+          false,                        // bInheritHandles VERY IMPORTANT that this is false
+          EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, // dwCreationFlags
+          envArg,                       // lpEnvironment
+          mutableCwd.get(),             // lpCurrentDirectory
+          &siEx.StartupInfo,            // lpStartupInfo
+          &piClient                     // lpProcessInformation
   );
-  if (!fSuccess) {
-    return throwNanError(&info, "Cannot create process", true);
+
+  if (!success) {
+    return -3; // throwNanError(&info, "Cannot create process", true);
   }
 
   // Update handle
-  handle->hShell = piClient.hProcess;
-  handle->cb.Reset(exitCallback);
-  handle->async.data = handle;
+  //handle->hShell = piClient.hProcess;
+  //handle->cb.Reset(exitCallback);
+  //handle->async.data = handle;
 
   // Setup OnProcessExit callback
-  uv_async_init(uv_default_loop(), &handle->async, OnProcessExit);
+  //uv_async_init(uv_default_loop(), &handle->async, OnProcessExit);
 
   // Setup Windows wait for process exit event
-  RegisterWaitForSingleObject(&handle->hWait, piClient.hProcess, OnProcessExitWinEvent, (PVOID)handle, INFINITE, WT_EXECUTEONLYONCE);
+  //RegisterWaitForSingleObject(&handle->hWait, piClient.hProcess, OnProcessExitWinEvent, (PVOID)handle, INFINITE, WT_EXECUTEONLYONCE);
 
+  hProcess = piClient.hProcess;
+  return piClient.dwProcessId;
+}
+#if 0
   // Return
   v8::Local<v8::Object> marshal = Nan::New<v8::Object>();
   Nan::Set(marshal, Nan::New<v8::String>("pid").ToLocalChecked(), Nan::New<v8::Number>(piClient.dwProcessId));
   info.GetReturnValue().Set(marshal);
 }
+#endif
+
+size_t envlen(const char *env) {
+  size_t i = 0;
+  while (!(env[i] == 0 && env[i+1] == 0)) i++;
+  return i + 2;
+}
+
+extern "C"
+int32_t PtyConnect(int id, const char *cmdline, const char *cwd, const char *env, HANDLE &hProcess) {
+  std::wstring wcmdline(cmdline, cmdline + strlen(cmdline));
+  std::wstring wcwd(cwd, cwd + strlen(cwd));
+  std::wstring wenv(env, env + envlen(env));
+
+  return PtyConnect(id, wcmdline, wcwd, wenv, hProcess);
+}
+
+#if 0
 
 static NAN_METHOD(PtyResize) {
   Nan::HandleScope scope;
@@ -453,3 +504,4 @@ extern "C" void init(v8::Local<v8::Object> target) {
 };
 
 NODE_MODULE(pty, init);
+#endif

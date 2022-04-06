@@ -43,9 +43,3 @@ export function createTerminal(file?: string, args?: ArgvOrCommandLine, opt?: IP
 export function open(options: IPtyOpenOptions): ITerminal {
   return terminalCtor.open(options);
 }
-
-/**
- * Expose the native API, available only in Unix.
- * Note that this is not public API and could be removed at any time.
- */
-export const native = terminalCtor.native;

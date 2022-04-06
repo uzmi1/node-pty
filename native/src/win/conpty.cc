@@ -35,12 +35,6 @@ struct pty_baton {
   HANDLE hOut;
   HPCON hpc;
 
-  //HANDLE hShell;
-  //HANDLE hWait;
-  //Nan::Callback cb;
-  //uv_async_t async;
-  //uv_thread_t tid;
-
   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
 };
 
@@ -50,9 +44,7 @@ static volatile LONG ptyCounter;
 static pty_baton* get_pty_baton(int id) {
   for (size_t i = 0; i < ptyHandles.size(); ++i) {
     pty_baton* ptyHandle = ptyHandles[i];
-    if (ptyHandle->id == id) {
-      return ptyHandle;
-    }
+    if (ptyHandle->id == id) { return ptyHandle; }
   }
   return nullptr;
 }
@@ -62,25 +54,14 @@ std::vector<T> vectorFromString(const std::basic_string<T> &str) {
     return std::vector<T>(str.begin(), str.end());
 }
 
-#if 0
-void throwNanError(const Nan::FunctionCallbackInfo<v8::Value>* info, const char* text, const bool getLastError) {
-  std::stringstream errorText;
-  errorText << text;
-  if (getLastError) {
-    errorText << ", error code: " << GetLastError();
-  }
-  Nan::ThrowError(errorText.str().c_str());
-  (*info).GetReturnValue().SetUndefined();
-}
-#endif
-
 // Returns a new server named pipe.  It has not yet been connected.
-bool createDataServerPipe(bool write,
-                          std::wstring kind,
-                          HANDLE* hServer,
-                          std::wstring &name,
-                          const std::wstring &pipeName)
-{
+bool createDataServerPipe(
+    bool write,
+    std::wstring kind,
+    HANDLE* hServer,
+    std::wstring &name,
+    const std::wstring &pipeName
+    ) {
   *hServer = INVALID_HANDLE_VALUE;
 
   name = L"\\\\.\\pipe\\" + pipeName + L"-" + kind;
@@ -185,140 +166,6 @@ HRESULT CreateNamedPipesAndPseudoConsole(uint32_t cols, uint32_t rows,
   return hr;
 }
 
-#if 0
-static NAN_METHOD(PtyStartProcess) {
-  Nan::HandleScope scope;
-
-  v8::Local<v8::Object> marshal;
-  std::wstring inName, outName;
-  BOOL fSuccess = FALSE;
-  std::unique_ptr<wchar_t[]> mutableCommandline;
-  PROCESS_INFORMATION _piClient{};
-
-  if (info.Length() != 6 ||
-      !info[0]->IsString() ||
-      !info[1]->IsNumber() ||
-      !info[2]->IsNumber() ||
-      !info[3]->IsBoolean() ||
-      !info[4]->IsString() ||
-      !info[5]->IsBoolean()) {
-    Nan::ThrowError("Usage: pty.startProcess(file, cols, rows, debug, pipeName, inheritCursor)");
-    return;
-  }
-
-  const std::wstring filename(path_util::to_wstring(Nan::Utf8String(info[0])));
-  const SHORT cols = info[1]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-  const SHORT rows = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-  const bool debug = Nan::To<bool>(info[3]).FromJust();
-  const std::wstring pipeName(path_util::to_wstring(Nan::Utf8String(info[4])));
-  const bool inheritCursor = Nan::To<bool>(info[5]).FromJust();
-
-  // use environment 'Path' variable to determine location of
-  // the relative path that we have recieved (e.g cmd.exe)
-  std::wstring shellpath;
-  if (::PathIsRelativeW(filename.c_str())) {
-    shellpath = path_util::get_shell_path(filename.c_str());
-  } else {
-    shellpath = filename;
-  }
-
-  std::string shellpath_(shellpath.begin(), shellpath.end());
-
-  if (shellpath.empty() || !path_util::file_exists(shellpath)) {
-    std::stringstream why;
-    why << "File not found: " << shellpath_;
-    Nan::ThrowError(why.str().c_str());
-    return;
-  }
-
-  HANDLE hIn, hOut;
-  HPCON hpc;
-  HRESULT hr = CreateNamedPipesAndPseudoConsole({cols, rows}, inheritCursor ? 1/*PSEUDOCONSOLE_INHERIT_CURSOR*/ : 0, &hIn, &hOut, &hpc, inName, outName, pipeName);
-
-  // Restore default handling of ctrl+c
-  SetConsoleCtrlHandler(NULL, FALSE);
-
-  // Set return values
-  marshal = Nan::New<v8::Object>();
-
-  if (SUCCEEDED(hr)) {
-    // We were able to instantiate a conpty
-    const int ptyId = InterlockedIncrement(&ptyCounter);
-    Nan::Set(marshal, Nan::New<v8::String>("pty").ToLocalChecked(), Nan::New<v8::Number>(ptyId));
-    ptyHandles.insert(ptyHandles.end(), new pty_baton(ptyId, hIn, hOut, hpc));
-  } else {
-    Nan::ThrowError("Cannot launch conpty");
-    return;
-  }
-
-  Nan::Set(marshal, Nan::New<v8::String>("fd").ToLocalChecked(), Nan::New<v8::Number>(-1));
-  {
-    std::string coninPipeNameStr(inName.begin(), inName.end());
-    Nan::Set(marshal, Nan::New<v8::String>("conin").ToLocalChecked(), Nan::New<v8::String>(coninPipeNameStr).ToLocalChecked());
-
-    std::string conoutPipeNameStr(outName.begin(), outName.end());
-    Nan::Set(marshal, Nan::New<v8::String>("conout").ToLocalChecked(), Nan::New<v8::String>(conoutPipeNameStr).ToLocalChecked());
-  }
-  info.GetReturnValue().Set(marshal);
-}
-
-VOID CALLBACK OnProcessExitWinEvent(
-    _In_ PVOID context,
-    _In_ BOOLEAN TimerOrWaitFired) {
-  pty_baton *baton = static_cast<pty_baton*>(context);
-
-  // Fire OnProcessExit
-  uv_async_send(&baton->async);
-}
-
-static void OnProcessExit(uv_async_t *async) {
-  Nan::HandleScope scope;
-  pty_baton *baton = static_cast<pty_baton*>(async->data);
-
-  UnregisterWait(baton->hWait);
-
-  // Get exit code
-  DWORD exitCode = 0;
-  GetExitCodeProcess(baton->hShell, &exitCode);
-
-  // Call function
-  v8::Local<v8::Value> args[1] = {
-    Nan::New<v8::Number>(exitCode)
-  };
-
-  Nan::AsyncResource asyncResource("node-pty.callback");
-  baton->cb.Call(1, args, &asyncResource);
-  // Clean up
-  baton->cb.Reset();
-}
-
-static NAN_METHOD(PtyConnect) {
-  Nan::HandleScope scope;
-
-  // If we're working with conpty's we need to call ConnectNamedPipe here AFTER
-  //    the Socket has attempted to connect to the other end, then actually
-  //    spawn the process here.
-
-  std::stringstream errorText;
-  BOOL fSuccess = FALSE;
-
-  if (info.Length() != 5 ||
-      !info[0]->IsNumber() ||
-      !info[1]->IsString() ||
-      !info[2]->IsString() ||
-      !info[3]->IsArray() ||
-      !info[4]->IsFunction()) {
-    Nan::ThrowError("Usage: pty.connect(id, cmdline, cwd, env, exitCallback)");
-    return;
-  }
-
-  const int id = info[0]->Int32Value(Nan::GetCurrentContext()).FromJust();
-  const std::wstring cmdline(path_util::to_wstring(Nan::Utf8String(info[1])));
-  const std::wstring cwd(path_util::to_wstring(Nan::Utf8String(info[2])));
-  const v8::Local<v8::Array> envValues = info[3].As<v8::Array>();
-  const v8::Local<v8::Function> exitCallback = v8::Local<v8::Function>::Cast(info[4]);
-#endif
-
 int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd, const std::wstring& env,
                    HANDLE& hProcess) {
   // Prepare command line
@@ -370,7 +217,7 @@ int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd,
                                        NULL);
 
   if (!success) {
-    return -2; // throwNanError(&info, "UpdateProcThreadAttribute failed", true);
+    return -2;
   }
 
   PROCESS_INFORMATION piClient{};
@@ -391,27 +238,9 @@ int32_t PtyConnect(int id, const std::wstring& cmdline, const std::wstring& cwd,
     return -3; // throwNanError(&info, "Cannot create process", true);
   }
 
-  // Update handle
-  //handle->hShell = piClient.hProcess;
-  //handle->cb.Reset(exitCallback);
-  //handle->async.data = handle;
-
-  // Setup OnProcessExit callback
-  //uv_async_init(uv_default_loop(), &handle->async, OnProcessExit);
-
-  // Setup Windows wait for process exit event
-  //RegisterWaitForSingleObject(&handle->hWait, piClient.hProcess, OnProcessExitWinEvent, (PVOID)handle, INFINITE, WT_EXECUTEONLYONCE);
-
   hProcess = piClient.hProcess;
   return piClient.dwProcessId;
 }
-#if 0
-  // Return
-  v8::Local<v8::Object> marshal = Nan::New<v8::Object>();
-  Nan::Set(marshal, Nan::New<v8::String>("pid").ToLocalChecked(), Nan::New<v8::Number>(piClient.dwProcessId));
-  info.GetReturnValue().Set(marshal);
-}
-#endif
 
 size_t envlen(const char *env) {
   size_t i = 0;
@@ -427,81 +256,3 @@ int32_t PtyConnect(int id, const char *cmdline, const char *cwd, const char *env
 
   return PtyConnect(id, wcmdline, wcwd, wenv, hProcess);
 }
-
-#if 0
-
-static NAN_METHOD(PtyResize) {
-  Nan::HandleScope scope;
-
-  if (info.Length() != 3 ||
-      !info[0]->IsNumber() ||
-      !info[1]->IsNumber() ||
-      !info[2]->IsNumber()) {
-    Nan::ThrowError("Usage: pty.resize(id, cols, rows)");
-    return;
-  }
-
-  int id = info[0]->Int32Value(Nan::GetCurrentContext()).FromJust();
-  SHORT cols = info[1]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-  SHORT rows = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-
-  const pty_baton* handle = get_pty_baton(id);
-
-  HANDLE hLibrary = LoadLibraryExW(L"kernel32.dll", 0, 0);
-  bool fLoadedDll = hLibrary != nullptr;
-  if (fLoadedDll)
-  {
-    PFNRESIZEPSEUDOCONSOLE const pfnResizePseudoConsole = (PFNRESIZEPSEUDOCONSOLE)GetProcAddress((HMODULE)hLibrary, "ResizePseudoConsole");
-    if (pfnResizePseudoConsole)
-    {
-      COORD size = {cols, rows};
-      pfnResizePseudoConsole(handle->hpc, size);
-    }
-  }
-
-  return info.GetReturnValue().SetUndefined();
-}
-
-static NAN_METHOD(PtyKill) {
-  Nan::HandleScope scope;
-
-  if (info.Length() != 1 ||
-      !info[0]->IsNumber()) {
-    Nan::ThrowError("Usage: pty.kill(id)");
-    return;
-  }
-
-  int id = info[0]->Int32Value(Nan::GetCurrentContext()).FromJust();
-
-  const pty_baton* handle = get_pty_baton(id);
-
-  HANDLE hLibrary = LoadLibraryExW(L"kernel32.dll", 0, 0);
-  bool fLoadedDll = hLibrary != nullptr;
-  if (fLoadedDll)
-  {
-    PFNCLOSEPSEUDOCONSOLE const pfnClosePseudoConsole = (PFNCLOSEPSEUDOCONSOLE)GetProcAddress((HMODULE)hLibrary, "ClosePseudoConsole");
-    if (pfnClosePseudoConsole)
-    {
-      pfnClosePseudoConsole(handle->hpc);
-    }
-  }
-
-  CloseHandle(handle->hShell);
-
-  return info.GetReturnValue().SetUndefined();
-}
-
-/**
-* Init
-*/
-
-extern "C" void init(v8::Local<v8::Object> target) {
-  Nan::HandleScope scope;
-  Nan::SetMethod(target, "startProcess", PtyStartProcess);
-  Nan::SetMethod(target, "connect", PtyConnect);
-  Nan::SetMethod(target, "resize", PtyResize);
-  Nan::SetMethod(target, "kill", PtyKill);
-};
-
-NODE_MODULE(pty, init);
-#endif

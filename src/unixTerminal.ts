@@ -4,14 +4,11 @@
  * Copyright (c) 2018, Microsoft Corporation (MIT License).
  */
 import * as net from 'net';
-import * as path from 'path';
 import { Terminal, DEFAULT_COLS, DEFAULT_ROWS } from './terminal';
 import { IProcessEnv, IPtyForkOptions, IPtyOpenOptions } from './interfaces';
 import { ArgvOrCommandLine } from './types';
 import { assign } from './utils';
-import { loadBinding } from '@node-rs/helper';
-
-const pty: IUnixNative = loadBinding(path.join(__dirname, '..'), 'node-pty', 'node-pty');
+import { ptyFork, ptyOpen, ptyProcess, ptyResize } from '../native';
 
 const DEFAULT_FILE = 'sh';
 const DEFAULT_NAME = 'xterm';
@@ -94,7 +91,7 @@ export class UnixTerminal extends Terminal {
     };
 
     // fork
-    const term = pty.fork(file, args, parsedEnv, cwd, this._cols, this._rows, uid, gid, (encoding === 'utf8'), onexit);
+    const term = ptyFork(file, args, parsedEnv, cwd, this._cols, this._rows, uid, gid, (encoding === 'utf8'), onexit);
 
     this._socket = new PipeSocket(term.fd);
     if (encoding !== null) {
@@ -184,7 +181,7 @@ export class UnixTerminal extends Terminal {
     const encoding = (opt.encoding === undefined ? 'utf8' : opt.encoding);
 
     // open
-    const term: IUnixOpenProcess = pty.open(cols, rows);
+    const term = ptyOpen(cols, rows);
 
     self._master = new PipeSocket(<number>term.master);
     if (encoding !== null) {
@@ -245,7 +242,7 @@ export class UnixTerminal extends Terminal {
    * Gets the name of the process.
    */
   public get process(): string {
-    return pty.process(this._fd, this._pty) || this._file;
+    return ptyProcess(this._fd, this._pty) || this._file;
   }
 
   /**
@@ -256,7 +253,7 @@ export class UnixTerminal extends Terminal {
     if (cols <= 0 || rows <= 0 || isNaN(cols) || isNaN(rows) || cols === Infinity || rows === Infinity) {
       throw new Error('resizing must be done using positive cols and rows');
     }
-    pty.resize(this._fd, cols, rows);
+    ptyResize(this._fd, cols, rows);
     this._cols = cols;
     this._rows = rows;
   }
@@ -278,7 +275,6 @@ export class UnixTerminal extends Terminal {
     delete env['LINES'];
   }
 
-  static readonly native = pty;
 }
 
 /**

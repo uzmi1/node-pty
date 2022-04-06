@@ -1,7 +1,8 @@
-#[cfg(target_family = "unix")]
 mod unix;
-#[cfg(target_family = "windows")]
 mod win;
+
+pub use unix::*;
+pub use win::*;
 
 //#[macro_use]
 //extern crate napi;
@@ -9,6 +10,8 @@ mod win;
 extern crate napi_derive;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate shared_library;
 
 /// Custom macro for simpler errors.
 /// Returns an error enum with generic failure and a message provided by the string literal

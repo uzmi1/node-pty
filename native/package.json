@@ -1,0 +1,9 @@
+{
+  "name": "native",
+  "scripts": {
+    "build": "npx -y -p @napi-rs/cli napi build --platform --release"
+  },
+  "napi": {
+    "name": "node-pty"
+  }
+}

@@ -13,7 +13,7 @@ fixtures/space folder/
 .vscode/settings.json
 .vscode/ipch/
 .idea
-
+.yarn
 
 # Rust stuff
 /target

@@ -6,12 +6,7 @@
  * single console attached to a process.
  */
 
-let getConsoleProcessList: any;
-try {
-  getConsoleProcessList = require('../build/Release/conpty_console_list.node').getConsoleProcessList;
-} catch (err) {
-  getConsoleProcessList = require('../build/Debug/conpty_console_list.node').getConsoleProcessList;
-}
+import {getConsoleProcessList} from '../native';
 
 const shellPid = parseInt(process.argv[2], 10);
 const consoleProcessList = getConsoleProcessList(shellPid);

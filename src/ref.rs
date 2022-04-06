@@ -341,7 +341,7 @@ fn pty_after_close() {
 ///
 fn pty_getproc(fd: i32, tty: String) -> Result<String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))] {
-        return err!("Platform not supported for pty_getproc");
+        return err!("Unsupported architecture for pty_getproc");
     }
     #[cfg(target_os = "linux")] {
         let f: *mut FILE;

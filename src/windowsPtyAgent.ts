@@ -46,7 +46,7 @@ export class WindowsPtyAgent {
   constructor(
     file: string,
     args: ArgvOrCommandLine,
-    env: string[],
+    env: Record<string, string>,
     cwd: string,
     cols: number,
     rows: number,
@@ -67,7 +67,7 @@ export class WindowsPtyAgent {
     // Open pty session.
     let term: IConptyProcess | IWinptyProcess;
     if (this._useConpty) {
-      term = conptyStartProcess(file, cols, rows, debug, this._generatePipeName(), conptyInheritCursor);
+      term = conptyStartProcess(cols, rows, this._generatePipeName(), conptyInheritCursor);
     } else {
       term = winptyStartProcess(file, commandLine, env, cwd, cols, rows, debug);
       this._pid = (term as IWinptyProcess).pid;

@@ -1,4 +1,12 @@
 #![deny(clippy::all)]
+/// Copyright (c) 2012-2015, Christopher Jeffrey (MIT License)
+/// Copyright (c) 2017, Daniel Imms (MIT License)
+/// Copyright (c) 2022, Daniel Brenot (MIT License)
+/// 
+/// This file is responsible for starting processes
+/// with pseudo-terminal file descriptors.
+
+use std::collections::HashMap;
 
 use napi::JsFunction;
 
@@ -26,7 +34,6 @@ use crate::err;
 
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Debug)]
 struct IUnixProcess {
   pub fd: i32,
   pub pid: i32,
@@ -34,7 +41,6 @@ struct IUnixProcess {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Debug)]
 struct IUnixOpenProcess {
   pub master: i32,
   pub slave: i32,
@@ -42,10 +48,11 @@ struct IUnixOpenProcess {
 }
 
 #[allow(dead_code)]
+#[allow(unused_variables)]
 #[napi]
 fn pty_fork(
   file: String, args: Vec<String>,
-  env: Vec<String>, cwd: String,
+  env: HashMap<String, String>, cwd: String,
   cols: i32, rows: i32,
   uid: i32, gid: i32,
   utf8: bool, onexit: JsFunction) -> napi::Result<IUnixProcess> {
@@ -187,6 +194,7 @@ fn pty_fork(
 }
 
 #[allow(dead_code)]
+#[allow(unused_variables)]
 #[napi]
 fn pty_open(cols: u32, rows: u32) -> napi::Result<IUnixOpenProcess> {
   #[cfg(target_family = "windows")]
@@ -211,6 +219,7 @@ fn pty_open(cols: u32, rows: u32) -> napi::Result<IUnixOpenProcess> {
 
 // Gets the name of the process with the given fie descriptor
 #[allow(dead_code)]
+#[allow(unused_variables)]
 #[napi]
 fn pty_process(fd: i32, tty: String) -> Option<String> {
   #[cfg(target_family = "windows")]
@@ -229,6 +238,7 @@ fn pty_process(fd: i32, tty: String) -> Option<String> {
 /// Resizes the terminal pointed to by the provided file descriptor
 /// to the preferred
 #[allow(dead_code)]
+#[allow(unused_variables)]
 #[napi]
 fn pty_resize(fd: i32, cols: i32, rows: i32) -> napi::Result<()>{
   #[cfg(target_family = "windows")]

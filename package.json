@@ -60,11 +60,5 @@
     "mocha": "^7.1.1",
     "ps-list": "^6.0.0",
     "typescript": "^3.8.3"
-  },
-  "dependencies": {
-    "@node-rs/helper": "^1.2.1"
-  },
-  "workspaces": [
-    "native"
-  ]
+  }
 }

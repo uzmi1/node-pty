@@ -1,7 +1,7 @@
+pub mod util;
 pub mod conpty;
 pub mod winpty;
 pub mod conpty_console_list;
-pub mod pseudocon;
 
 pub use conpty::*;
 pub use winpty::*;

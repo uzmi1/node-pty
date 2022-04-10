@@ -1,113 +1,297 @@
+#![deny(clippy::all)]
+/// Copyright (c) 2013-2015, Christopher Jeffrey, Peter Sunde (MIT License)
+/// Copyright (c) 2016, Daniel Imms (MIT License).
+/// Copyright (c) 2018, Microsoft Corporation (MIT License).
+/// Copyright (c) 2022, Daniel Brenot (MIT License)
+/// 
+/// This file is responsible for starting processes
+/// with pseudo-terminal file descriptors.
+
+
 
 use lazy_static::lazy_static;
-use std::{sync::{Mutex, Arc}, collections::HashMap};
+use std::{collections::HashMap, ptr::null_mut, sync::{atomic::AtomicUsize, Arc, Mutex}};
 
-use napi::JsFunction;
-use widestring::{WideCString};
-use winapi::{um::{winnt::HRESULT, handleapi::INVALID_HANDLE_VALUE, winbase::{PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE, PIPE_READMODE_BYTE, PIPE_WAIT}, minwinbase::{SECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES}}, shared::winerror::HRESULT_FROM_WIN32};
-use crate::err;
+use std::collections::hash_map::Entry::Occupied;
+
 
 #[cfg(target_family = "windows")] use {
-  std::ptr::null,
-  std::ffi::CString,
-  widestring::U16CString,
-  winapi::{
-    ctypes::wchar_t,
-    shared::{
-      winerror::SUCCEEDED,
-      minwindef::DWORD
+  napi::{
+    threadsafe_function::{
+      ThreadSafeCallContext, ErrorStrategy,
+      ThreadsafeFunction, ErrorStrategy::Fatal,
+      ThreadsafeFunctionCallMode
     },
-    um::{
-      processthreadsapi::GetExitCodeProcess,
-      winbase::{INFINITE, RegisterWaitForSingleObject},
-      winnt::{HANDLE, PVOID, WT_EXECUTEONLYONCE},
-      errhandlingapi::GetLastError
-    }
+    JsFunction
   },
-  napi::threadsafe_function::{
-    ThreadSafeCallContext, ThreadsafeFunctionCallMode, ErrorStrategy,
-    ThreadsafeFunction, ErrorStrategy::Fatal
-  },
-  windows::Win32::System::{
-    Console::{
-      CreatePseudoConsole,
-      ResizePseudoConsole,
-      ClosePseudoConsole,
-      
+  windows::{
+    Win32::{
+      Foundation::{
+        HANDLE, INVALID_HANDLE_VALUE, 
+        BOOLEAN, CloseHandle
+      },
+      System::{
+        Threading::{
+          RegisterWaitForSingleObject, WT_EXECUTEONLYONCE,
+          PROCESS_INFORMATION, STARTUPINFOW,
+          STARTUPINFOEXW, STARTF_USESTDHANDLES,
+          LPPROC_THREAD_ATTRIBUTE_LIST,
+          InitializeProcThreadAttributeList,
+          UpdateProcThreadAttribute,
+          PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+          CreateProcessW,
+          EXTENDED_STARTUPINFO_PRESENT,
+          CREATE_UNICODE_ENVIRONMENT,
+          GetExitCodeProcess
+        },
+        WindowsProgramming::INFINITE,
+        Console::{
+          COORD, HPCON, SetConsoleCtrlHandler,
+          CreatePseudoConsole, ResizePseudoConsole, ClosePseudoConsole
+        },
+        Pipes::{
+          CreateNamedPipeW, PIPE_TYPE_BYTE,
+          PIPE_READMODE_BYTE, PIPE_WAIT,
+          ConnectNamedPipe, DisconnectNamedPipe
+        }
+      },
+      Storage::FileSystem::{
+        PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
+        FILE_FLAG_FIRST_PIPE_INSTANCE
+      },
+      Security::SECURITY_ATTRIBUTES
     },
-    Pipes::CreateNamedPipeW
-  }
+    core::{PCWSTR, PWSTR}
+  },
+  crate::{err, util::{map_to_wstring, coerce_i16}},
+  winsafe::WString
 };
+
+struct ConptyBaton {
+  /// Handle for the pseudoconsole
+  pub hpc: HPCON,
+  /// Handle for the input pipe
+  pub h_in: HANDLE,
+  /// Handle for the output pipe
+  pub h_out: HANDLE,
+  /// Handle for the shell
+  pub h_shell: Option<HANDLE>,
+  /// Handle for
+  pub h_wait: Option<HANDLE>,
+  /// The callback to be called when the corresponding process exits
+  pub async_cb: Option<ThreadsafeFunction<u32, Fatal>>
+}
+
+/// Allows for the baton to be sent across threads.
+/// We need to make sure any pointers held here are released
+/// to avoid memory leaks, and generally follow best practices
+/// for sharing pointers across threads
+unsafe impl Send for ConptyBaton {}
+
+/// Static count of the next available id
+static PTY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 lazy_static! {
   /// Static list of all pty handles protected by a mutex and atomic ref count 
-  pub static ref PTY_HANDLES: Arc<Mutex<HashMap<i32, ConptyBaton>>> =  Arc::new(Mutex::new(HashMap::new()));
+  static ref PTY_HANDLES: Arc<Mutex<HashMap<usize, ConptyBaton>>> =  Arc::new(Mutex::new(HashMap::new()));
 }
 
-/// Returns a new server named pipe.  It has not yet been connected.
-unsafe fn createDataServerPipe(
-    write: bool,
-    kind: String,
-    hServer: HANDLE,
-    name: String,
-    pipeName: String
-    ) -> bool {
-  hServer = INVALID_HANDLE_VALUE;
+/// Returns a new server named pipe.
+/// It has not yet been connected.
+pub unsafe fn create_data_server_pipe(pipe_name: &str) -> napi::Result<HANDLE> {
+  // Convert the pipe name to a wide string pointer
+  let pipe_name = PCWSTR(WString::from_str(pipe_name).as_ptr());
+  //
+  let win_open_mode = PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE;
+  // Initialize empty security attributes
+  let mut sa: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES::default();
+  sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as _;
 
+  let h_server = CreateNamedPipeW(
+      pipe_name, win_open_mode,
+      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+      1, 0, 0, 30000,
+      &sa
+  );
+  if h_server == INVALID_HANDLE_VALUE {
+      return err!("Failed to create handle for pipe");
+  }
+  return Ok(h_server);
+}
+
+/// Creates input and output pipes with the given name
+pub unsafe fn create_named_pipes_and_pseudo_console(
+  size: COORD,
+  flags: u32,
+  pipe_name: String
+) -> napi::Result<IConptyProcess> {
+  // Create names for the input and output pipes
+  let name_input = format!("\\\\.\\pipe\\{}-in", pipe_name);
+  let name_output = format!("\\\\.\\pipe\\{}-out", pipe_name);
+  // Creates the input side of the pipe
+  let ph_input = create_data_server_pipe(&name_input)?;
+  // Creates the output side of the pipe
+  let ph_output = create_data_server_pipe(&name_output)?;
+  // Creates a pseudoconsole using the input and output sides of the pipes
+  match CreatePseudoConsole(size, ph_input, ph_output, flags) {
+      Ok(hpc) => {
+          // Creates a new baton and adds it to the global store.
+          // This baton doesn't have a handle for the process
+          // or a callback yet because they still need to be initialized with
+          // a call to conpty_connect
+          let baton = ConptyBaton {
+              hpc,
+              h_in: ph_input,
+              h_out: ph_output,
+              async_cb: None,
+              h_shell: None,
+              h_wait: None
+          };
+          let id = PTY_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+          // Add the baton to the list
+          PTY_HANDLES.lock().unwrap().entry(id).insert_entry(baton);
+          return Ok(IConptyProcess {
+              fd: -1, pty: id as _,
+              conin: name_input, conout: name_output
+          });
+      },
+      Err(_) => { return err!("Failed to create Pseudoconsole"); }
+  }
+}
+
+/// Creates a thread with the 
+/// the provided commandline, directory and environment.
+/// 
+/// Returns the process information for the newly created thread.
+pub unsafe fn pty_connect(
+  id: usize,
+  cmdline: String,
+  cwd: String,
+  env: HashMap<String, String>,
+  onexit: JsFunction
+) -> napi::Result<PROCESS_INFORMATION> {
+  // Convert all 3 values to wstrings
+  let env = map_to_wstring(env);
+  let mut cmdline = WString::from_str(cmdline.as_str());
+  let mut cwd = WString::from_str(cwd.as_str());
   
-  name = WideCString::from_str(format!("\\\\.\\pipe\\{}-{}", pipeName, kind)).unwrap();
+  // Get the global handles
+  let mut handles = PTY_HANDLES.lock().unwrap();
+  // Fetch pty handle from ID and start process
+  let mut baton: &mut ConptyBaton = handles.get_mut(&id).unwrap();
+  // Connects the named input and output pipes
+  let mut success = ConnectNamedPipe(baton.h_in, null_mut()).as_bool()
+      && ConnectNamedPipe(baton.h_out, null_mut()).as_bool();
+  if !success { return err!("Failed to connect named pipes"); }
 
-  let winOpenMode: DWORD =  PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE;
+  let mut lpstartupinfo = STARTUPINFOW::default();
+  lpstartupinfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as _;
+  lpstartupinfo.dwFlags = STARTF_USESTDHANDLES;
 
-  let sa: SECURITY_ATTRIBUTES = {};
-  sa.nLength = sizeof(sa);
+  // Attach the pseudoconsole to the client application we're creating
+  let mut si_ex = STARTUPINFOEXW::default();
+  si_ex.StartupInfo = lpstartupinfo;
 
-  hServer = CreateNamedPipeW(
-    name.c_str(), winOpenMode,
-    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-    1, 0, 0, 30000,
-    &sa
+  let mut size: usize = 0;
+  InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST::default(), 1, 0, &mut size);
+
+  // BYTE *attrList = new BYTE[size];
+  si_ex.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST::default();
+
+  success = InitializeProcThreadAttributeList(si_ex.lpAttributeList, 1, 0, &mut size).as_bool();
+  if !success { return err!("InitializeProcThreadAttributeList failed"); }
+
+  success = UpdateProcThreadAttribute(
+      si_ex.lpAttributeList,
+  0,
+  PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as _,
+  baton.hpc.0 as _,
+  std::mem::size_of::<HPCON>(),
+  null_mut(),
+  null_mut()
+  ).as_bool();
+
+  if !success { return err!("Failed to update thread attribute") }
+  
+  // Creates a process and gets the information about it to return
+  let mut pi_client = PROCESS_INFORMATION::default();
+  success = CreateProcessW(
+          PCWSTR(null_mut()),
+          PWSTR(cmdline.as_mut_ptr()),
+          null_mut(),
+          null_mut(),
+          false,
+          EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+          env.as_ptr() as _,
+          PCWSTR(cwd.as_mut_ptr()),
+          &si_ex.StartupInfo,
+          &mut pi_client
+  ).as_bool();
+
+  if !success { return err!("Cannot create process"); }
+
+  // Set the handle for the shell to the one obtained from
+  // creating the new process
+  baton.h_shell = Some(pi_client.hProcess);
+
+  // Set the async callback for the baton to the function passed in from js
+  baton.async_cb = Some(onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
+      |ctx: ThreadSafeCallContext<u32>| {
+          ctx.env.create_uint32(ctx.value).map(|v0| { vec![v0] })
+      }
+  )?);
+
+  // Setup Windows wait for process exit event
+  let mut h_wait = HANDLE::default();
+  RegisterWaitForSingleObject(
+      &mut h_wait,
+      pi_client.hProcess,
+      Some(on_exit_process),
+      Box::into_raw(Box::new(id)) as *mut _,
+      INFINITE,
+      WT_EXECUTEONLYONCE
+  );
+  baton.h_wait = Some(h_wait);
+
+  return Ok(pi_client);
+}
+
+/// This function acts as a native callback point for when processes end.
+///
+/// This is marked as "extern" so that the callback isn't mangled
+/// by the compiler. This allows for the other process to call a
+/// predictable function when it exits. The exit code can then
+/// be sent to the async callback in javascript
+pub unsafe extern "system" fn on_exit_process(ctx: *mut std::ffi::c_void, _b: BOOLEAN) -> () {
+  // Takes ownership of the raw pointer,
+  // allowing it to be owned by the local context and
+  // deallocated when it goes out of scope
+  let ctx: Box<usize> = Box::from_raw(ctx as _);
+  // Gets the global map of all handles
+  let mut handles = PTY_HANDLES.lock().expect(
+      "Failed to aquire lock for pty handles when exiting process"
   );
 
-  return hServer != INVALID_HANDLE_VALUE;
-}
+  let baton = handles.entry(*ctx);
 
-fn CreateNamedPipesAndPseudoConsole(
-  cols: u32, rows: u32,
-  flags: u32,
-  pipe_name: u16,
-  out_pty_id: &mut i32,
-  out_h_in: &mut *const cty::c_void,
-  out_in_name: &mut *const wchar_t,
-  out_h_out: &mut *const cty::c_void,
-  out_out_name: &mut *const wchar_t
-) -> HRESULT {
-  // If the kernel doesn't export these functions then their system is
-  // too old and we cannot run.
-
-  let success: bool = createDataServerPipe(true, "in", phInput, inName, pipeName);
-  if !success {
-    return unsafe { HRESULT_FROM_WIN32(GetLastError()) }
+  if let Occupied(baton) = baton {
+      let baton = baton.get();
+      let mut exit_code: u32 = 0;
+      GetExitCodeProcess(HANDLE(baton.hpc.0), &mut exit_code);
+      // If an async callback is defined for when the process exits,
+      // then we want to call it here. We don't do anything if it isn't
+      // defined.
+      if let Some(cb) = &baton.async_cb {
+          cb.call(exit_code, ThreadsafeFunctionCallMode::Blocking);
+      }
+      // Free the baton from the global map.
+      handles.remove_entry(&ctx);
   }
-  success = createDataServerPipe(false, "out", phOutput, outName, pipeName);
-  if !success {
-    return unsafe { HRESULT_FROM_WIN32(GetLastError()) }
-  }
-  unsafe { CreatePseudoConsole(size, *phInput, *phOutput, dwFlags, phPC) }
-}
-
-fn PtyConnect(
-  id: cty::c_int, cmdline: *const cty::c_char,
-  cwd: *const cty::c_char, env: *const cty::c_char,
-  out_h_process: &mut HANDLE
-) -> i32 {
-  0
 }
 
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Debug)]
-struct IConptyProcess {
+pub struct IConptyProcess {
   pub fd: i32,
   pub pty: i32,
   pub conin: String,
@@ -119,192 +303,88 @@ struct IConptyConnection {
   pub pid: i32
 }
 
-struct ConptyBaton {
-  pub h_process: HANDLE,
-  pub async_cb: ThreadsafeFunction<u32, Fatal>
-}
-
-unsafe impl Send for ConptyBaton {}
-
 #[allow(dead_code)]
 #[napi]
 fn conpty_start_process(
-  file: String,
-  cols: u32, rows: u32,
-  debug: bool, pipe_name: String,
-  conpty_inherit_cursor: bool) -> napi::Result<IConptyProcess> {
-    #[cfg(not(target_family = "windows"))]
-    return err!("Platform not supported");
-    let p = U16CString::from_str(pipe_name).unwrap();
+  cols: i32, rows: i32,
+  pipe_name: String,
+  conpty_inherit_cursor: bool
+) -> napi::Result<IConptyProcess> {
+  #[cfg(not(target_family = "windows"))]
+  return err!("Platform not supported");
+  // Coerce the input values into coordinate values
+  let cols = coerce_i16(cols)?;
+  let rows = coerce_i16(rows)?;
 
-    let mut pty_id: cty::c_int = 0;
-    let mut h_in: *const cty::c_void = null();
-    let mut in_name: *const wchar_t = null();
-    let mut h_out: *const cty::c_void = null();
-    let mut out_name: *const wchar_t = null();
-
-    let hr = CreateNamedPipesAndPseudoConsole(
-      cols, rows,
+  unsafe {
+      let process = create_named_pipes_and_pseudo_console(
+      COORD { X: cols, Y: rows },
       if conpty_inherit_cursor { 1 } else { 0 },
-      p.as_ptr(),
-      &mut pty_id,
-      &mut h_in, &mut in_name,
-      &mut h_out, &mut out_name
-    );
-
-    if ! SUCCEEDED(hr) { return err!("conpty failed"); }
-
-    // @todo SetConsoleCtrl
-
-    Ok(IConptyProcess {
-      fd: -1, pty: pty_id,
-      conin: unsafe { from_wchar_ptr(in_name) },
-      conout: unsafe { from_wchar_ptr(out_name) }
-    })
+        pipe_name
+      )?;
+      // Why do we do this?
+      SetConsoleCtrlHandler(None, None);
+      Ok(process)
+  }
 }
 
 #[allow(dead_code)]
 #[napi]
-fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: Vec<String>, onexit: JsFunction) -> napi::Result<IConptyConnection> {
-  #[cfg(not(target_family = "windows"))]
-  return err!("Platform not supported");
-  let senv = (env.join("\0") + "\0\0").into_bytes();
+fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: HashMap<String, String>, onexit: JsFunction) -> napi::Result<IConptyConnection> {
+    #[cfg(not(target_family = "windows"))]
+    return err!("Platform not supported");
 
-  let mut h_process: HANDLE = unsafe { std::mem::zeroed() };
-  let pid = unsafe { PtyConnect(pty_id, CString::new(cmdline)?.as_ptr(),
-      CString::new(cwd)?.as_ptr(), senv.as_ptr() as *const cty::c_char, &mut h_process) };
+    unsafe {
+        pty_connect(
+            pty_id as usize,
+            cmdline, cwd, env,
+            onexit
+        )?
+    };
 
-  let async_cb = onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
-    |ctx: ThreadSafeCallContext<u32>| {
-      ctx.env.create_uint32(ctx.value).map(|v0| { vec![v0] })
-    })?;
-
-  let baton = Box::new( ConptyBaton { h_process, async_cb } );
-
-  unsafe {
-    let mut h_wait: HANDLE = std::mem::zeroed();
-    RegisterWaitForSingleObject(&mut h_wait, h_process,
-                                Some(on_exit_process_eh),
-                                Box::into_raw(baton) as *mut _,
-                                INFINITE, WT_EXECUTEONLYONCE);
-  }
-
-  /* @todo check `pid > 0` and report errors */
-  Ok(IConptyConnection { pid })
+    Ok(IConptyConnection { pid: pty_id })
 }
 
 #[allow(dead_code)]
 #[napi]
 fn conpty_resize(pty_id: i32, cols: i32, rows: i32) -> napi::Result<()>{
-  #[cfg(not(target_family = "windows"))]
-  return err!("Platform not supported");
-  return Ok(());
+    #[cfg(not(target_family = "windows"))]
+    return err!("Platform not supported");
+
+    let pty_id = pty_id as usize;
+    let cols = coerce_i16(cols)?;
+    let rows = coerce_i16(rows)?;
+
+    match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
+        Some(handle) => {
+            let size: COORD = COORD { X: cols, Y: rows };
+            unsafe { 
+              match ResizePseudoConsole(handle.hpc, size) {
+                Err(_) => return err!("Failed to resize Pseudoterminal"),
+                Ok(_) => return Ok(())
+              }
+            }
+        },
+        None => { return err!("No pty was found with the provided id"); }
+    }
 }
 
 #[allow(dead_code)]
 #[napi]
-fn conpty_kill(pty_id: i32) -> napi::Result<()> {
-  #[cfg(not(target_family = "windows"))]
-  return err!("Platform not supported");
-  return Ok(());
+unsafe fn conpty_kill(pty_id: i32) -> napi::Result<()> {
+    #[cfg(not(target_family = "windows"))]
+    return err!("Platform not supported");
+    let pty_id = pty_id as usize;
+    match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
+      Some(handle) => {
+          ClosePseudoConsole(handle.hpc);
+          DisconnectNamedPipe(handle.h_in);
+          DisconnectNamedPipe(handle.h_out);
+          CloseHandle(handle.h_in);
+          CloseHandle(handle.h_out);
+          CloseHandle(handle.h_shell);
+          return Ok(());
+      },
+      None => { return err!("No pty was found with the provided id"); }
+    }    
 }
-
-// #[napi(js_name = "startProcess")]
-// #[allow(dead_code)]
-// fn start_process(
-//   _file: String,
-//   cols: u32, rows: u32,
-//   _debug: bool, pipe_name: String,
-//   conpty_inherit_cursor: bool) -> napi::Result<IConptyProcess> {
-
-//   let p = U16CString::from_str(pipe_name).unwrap();
-
-//   let mut pty_id: cty::c_int = 0;
-//   let mut h_in: *const cty::c_void = null();
-//   let mut in_name: *const wchar_t = null();
-//   let mut h_out: *const cty::c_void = null();
-//   let mut out_name: *const wchar_t = null();
-
-//   let hr = unsafe {
-//     CreateNamedPipesAndPseudoConsole(cols, rows,
-//                                      if conpty_inherit_cursor { 1 } else { 0 },
-//                                      p.as_ptr(),
-//                                      &mut pty_id,
-//                                      &mut h_in, &mut in_name,
-//                                      &mut h_out, &mut out_name)
-//   };
-
-//   if ! SUCCEEDED(hr) {
-//     panic!("conpty failed");
-//   }
-
-//   // @todo SetConsoleCtrl
-
-//   let result = IConptyProcess {
-//     fd: -1, pty: pty_id,
-//     conin: unsafe { from_wchar_ptr(in_name) },
-//     conout: unsafe { from_wchar_ptr(out_name) }
-//   };
-//   return Ok(result);
-// }
-
-// #[napi(js_name = "connect")]
-// #[allow(dead_code)]
-// fn connect(pty_id: i32, cmdline: String, cwd: String, env: Vec<String>, onexit: JsFunction) -> napi::Result<IConptyConnection> {
-//   let senv = (env.join("\0") + "\0\0").into_bytes();
-
-//   let mut h_process: HANDLE = unsafe { std::mem::zeroed() };
-//   let pid = unsafe { PtyConnect(pty_id, CString::new(cmdline)?.as_ptr(),
-//       CString::new(cwd)?.as_ptr(), senv.as_ptr() as *const cty::c_char, &mut h_process) };
-
-//   let async_cb = onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
-//     |ctx: ThreadSafeCallContext<u32>| {
-//       ctx.env.create_uint32(ctx.value).map(|v0| { vec![v0] })
-//     })?;
-
-//   let baton = Box::new( ConptyBaton { h_process, async_cb } );
-
-//   unsafe {
-//     let mut h_wait: HANDLE = std::mem::zeroed();
-//     RegisterWaitForSingleObject(&mut h_wait, h_process,
-//                                 Some(on_exit_process_eh),
-//                                 Box::into_raw(baton) as *mut _,
-//                                 INFINITE, WT_EXECUTEONLYONCE);
-//   }
-
-//   /* @todo check `pid > 0` and report errors */
-//   Ok(IConptyConnection { pid })
-// }
-
-// unsafe extern "system" fn on_exit_process_eh(ctx: PVOID, _b: u8) -> () {
-//   let baton = Box::from_raw(ctx as *mut ConptyBaton);
-//   println!("hProcess = {:?}", baton.h_process);
-
-//   let mut exit_code: u32 = 0;
-//   GetExitCodeProcess(baton.h_process, &mut exit_code);
-//   println!("exit code = {}", exit_code);
-
-//   baton.async_cb.call(exit_code, ThreadsafeFunctionCallMode::Blocking);
-//   /* @todo free the baton */
-// }
-
-unsafe fn from_wchar_ptr(s: *const wchar_t) -> String {
-  U16CString::from_ptr_str(s).to_string_lossy().into()
-}
-
-/// This is marked as "extern" so that the callback isn't mangled
-/// by the compiler. This allows for the other process to call a
-/// predictable function when it exits. The exit code can then
-/// be sent to the async callback in javascript
-unsafe extern "system" fn on_exit_process_eh(ctx: PVOID, _b: u8) -> () {
-  let baton = Box::from_raw(ctx as *mut ConptyBaton);
-  println!("hProcess = {:?}", baton.h_process);
-
-  let mut exit_code: u32 = 0;
-  GetExitCodeProcess(baton.h_process, &mut exit_code);
-  println!("exit code = {}", exit_code);
-
-  baton.async_cb.call(exit_code, ThreadsafeFunctionCallMode::Blocking);
-  /* @todo free the baton */
-}
-

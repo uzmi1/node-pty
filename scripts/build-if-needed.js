@@ -3,16 +3,21 @@
  * be imported.
  */
 const path = require('path');
-const { mainModule } = require('process');
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 
 async function main() {
-    // Tries to import the native module. If it fails, then a binary will be built
+    // Tries to import the native module.
+    // If it fails, then a binary will be built
     try {
-        require('../native');
+        const native = require('../native');
+        const version = require('../package.json').version;
+        if(native.version() !== version) {
+            console.log(`Native library version mismatch: ${native.version()} != ${version}`);
+            throw Error('Native library is old')
+        }
     } catch (e) {
-        console.log(`No binary was found for the platform ${process.platform}.`);
+        console.log(`No current binary was found for the platform ${process.platform}.`);
         console.log('A binary will now be built for this platform. This may take a while.');
         // Run the build in the native folder
         const result = await exec('npm run build', {

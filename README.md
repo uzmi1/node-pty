@@ -82,6 +82,7 @@ npm run build
 
 Node.JS 12+ or Electron 8+ is required to use `node-pty`.
 
+
 ### Linux (apt)
 
 ```sh
@@ -94,15 +95,52 @@ Xcode is needed to compile the sources, this can be installed from the App Store
 
 ### Windows
 
-`npm install` requires some tools to be present in the system like Python and C++ compiler. Windows users can easily install them by running the following command in PowerShell as administrator. For more information see https://github.com/felixrieseberg/windows-build-tools:
+`npm install` requires some tools to be present in the system.
 
-```sh
-npm install --global --production windows-build-tools
-```
+You need the following to build winpty:
+ - A Cygwin or MSYS installation
+ - GNU make
+ - A MinGW g++ toolchain capable of compiling C++11 code to build winpty.dll and winpty-agent.exe
+ - A g++ toolchain targeting Cygwin or MSYS to build winpty.exe
 
-The following are also needed:
 
-- [Windows SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-10-sdk) - only the "Desktop C++ Apps" components are needed to be installed
+Winpty requires two g++ toolchains as it is split into two parts. The winpty.dll and winpty-agent.exe binaries interface with the native Windows command prompt window so they are compiled with the native MinGW toolchain. The winpty.exe binary interfaces with the MSYS/Cygwin terminal so it is compiled with the MSYS/Cygwin toolchain.
+
+MinGW appears to be split into two distributions -- MinGW (creates 32-bit binaries) and MinGW-w64 (creates both 32-bit and 64-bit binaries). Either one is generally acceptable.
+
+Cygwin packages
+The default g++ compiler for Cygwin targets Cygwin itself, but Cygwin also packages MinGW-w64 compilers. As of this writing, the necessary packages are:
+
+Either mingw64-i686-gcc-g++ or mingw64-x86_64-gcc-g++. Select the appropriate compiler for your CPU architecture.
+gcc-g++
+make
+According to the original winpty library, only the MinGW-w64 compiler is acceptable. The MinGW compiler (e.g. from the mingw-gcc-g++ package) is no longer maintained and is too buggy.
+
+MSYS packages
+For the original MSYS, use the mingw-get tool (MinGW Installation Manager), and select at least these components:
+
+mingw-developer-toolkit
+mingw32-base
+mingw32-gcc-g++
+msys-base
+msys-system-builder
+When running ./configure, make sure that mingw32-g++ is in your PATH. It will be in the C:\MinGW\bin directory.
+
+MSYS2 packages
+For MSYS2, use pacman and install at least these packages:
+
+msys/gcc
+mingw32/mingw-w64-i686-gcc or mingw64/mingw-w64-x86_64-gcc. Select the appropriate compiler for your CPU architecture.
+make
+MSYS2 provides three start menu shortcuts for starting MSYS2:
+
+MinGW-w64 Win32 Shell
+MinGW-w64 Win64 Shell
+MSYS2 Shell
+To build winpty, use the MinGW-w64 {Win32,Win64} shortcut of the architecture matching MSYS2. These shortcuts will put the g++ compiler from the {mingw32,mingw64}/mingw-w64-{i686,x86_64}-gcc packages into the PATH.
+
+Alternatively, instead of installing mingw32/mingw-w64-i686-gcc or mingw64/mingw-w64-x86_64-gcc, install the mingw-w64-cross-gcc and mingw-w64-cross-crt-git packages. These packages install cross-compilers into /opt/bin, and then any of the three shortcuts will work.
+
 
 ## Debugging
 

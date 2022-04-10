@@ -59,7 +59,6 @@ export class UnixTerminal extends Terminal {
     env.PWD = cwd;
     const name = opt.name || env.TERM || DEFAULT_NAME;
     env.TERM = name;
-    const parsedEnv = this._parseEnv(env);
 
     const encoding = (opt.encoding === undefined ? 'utf8' : opt.encoding);
 
@@ -91,7 +90,7 @@ export class UnixTerminal extends Terminal {
     };
 
     // fork
-    const term = ptyFork(file, args, parsedEnv, cwd, this._cols, this._rows, uid, gid, (encoding === 'utf8'), onexit);
+    const term = ptyFork(file, args, env, cwd, this._cols, this._rows, uid, gid, (encoding === 'utf8'), onexit);
 
     this._socket = new PipeSocket(term.fd);
     if (encoding !== null) {

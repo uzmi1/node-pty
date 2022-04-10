@@ -13,7 +13,7 @@ export interface IUnixOpenProcess {
   slave: number
   pty: string
 }
-export function ptyFork(file: string, args: Array<string>, env: Array<string>, cwd: string, cols: number, rows: number, uid: number, gid: number, utf8: boolean, onexit: (...args: any[]) => any): IUnixProcess
+export function ptyFork(file: string, args: Array<string>, env: Record<string, string>, cwd: string, cols: number, rows: number, uid: number, gid: number, utf8: boolean, onexit: (...args: any[]) => any): IUnixProcess
 export function ptyOpen(cols: number, rows: number): IUnixOpenProcess
 export function ptyProcess(fd: number, tty: string): string | undefined | null
 /**
@@ -30,8 +30,8 @@ export interface IConptyProcess {
 export interface IConptyConnection {
   pid: number
 }
-export function conptyStartProcess(file: string, cols: number, rows: number, debug: boolean, pipeName: string, conptyInheritCursor: boolean): IConptyProcess
-export function conptyConnect(ptyId: number, cmdline: string, cwd: string, env: Array<string>, onexit: (...args: any[]) => any): IConptyConnection
+export function conptyStartProcess(cols: number, rows: number, pipeName: string, conptyInheritCursor: boolean): IConptyProcess
+export function conptyConnect(ptyId: number, cmdline: string, cwd: string, env: Record<string, string>, onexit: (...args: any[]) => any): IConptyConnection
 export function conptyResize(ptyId: number, cols: number, rows: number): void
 export function conptyKill(ptyId: number): void
 export interface IWinptyProcess {
@@ -43,9 +43,14 @@ export interface IWinptyProcess {
   innerPid: number
   innerPidHandle: number
 }
-export function winptyStartProcess(file: string, commandLine: string, env: Array<string>, cwd: string, cols: number, rows: number, debug: boolean): IWinptyProcess
-export function winptyResize(processHandle: number, cols: number, rows: number): void
+export function winptyStartProcess(file: string, commandLine: string, env: Record<string, string>, cwd: string, cols: number, rows: number, debug: boolean): IWinptyProcess
+export function winptyResize(pid: number, cols: number, rows: number): void
 export function winptyKill(pid: number, innerPidHandle: number): void
 export function winptyGetProcessList(pid: number): Array<number>
 export function winptyGetExitCode(innerPidHandle: number): number
 export function getConsoleProcessList(pid: number): Array<number>
+/**
+ * Bakes the version number into the binary so that it can be detected
+ * if the binary version is not up to date with the library version
+ */
+export function version(): string

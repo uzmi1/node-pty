@@ -236,7 +236,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { ptyFork, ptyOpen, ptyProcess, ptyResize, conptyStartProcess, conptyConnect, conptyResize, conptyKill, winptyStartProcess, winptyResize, winptyKill, winptyGetProcessList, winptyGetExitCode, getConsoleProcessList } = nativeBinding
+const { ptyFork, ptyOpen, ptyProcess, ptyResize, conptyStartProcess, conptyConnect, conptyResize, conptyKill, winptyStartProcess, winptyResize, winptyKill, winptyGetProcessList, winptyGetExitCode, getConsoleProcessList, version } = nativeBinding
 
 module.exports.ptyFork = ptyFork
 module.exports.ptyOpen = ptyOpen
@@ -252,3 +252,4 @@ module.exports.winptyKill = winptyKill
 module.exports.winptyGetProcessList = winptyGetProcessList
 module.exports.winptyGetExitCode = winptyGetExitCode
 module.exports.getConsoleProcessList = getConsoleProcessList
+module.exports.version = version

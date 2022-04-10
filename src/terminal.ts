@@ -193,18 +193,4 @@ export abstract class Terminal implements ITerminal {
     this._writable = false;
     this._readable = false;
   }
-
-  protected _parseEnv(env: {[key: string]: string}): string[] {
-    const keys = Object.keys(env || {});
-    const pairs = [];
-
-    for (let i = 0; i < keys.length; i++) {
-      if (keys[i] === undefined) {
-        continue;
-      }
-      pairs.push(keys[i] + '=' + env[keys[i]]);
-    }
-
-    return pairs;
-  }
 }

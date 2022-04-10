@@ -39,7 +39,6 @@ export class WindowsTerminal extends Terminal {
     this._rows = opt.rows || DEFAULT_ROWS;
     const cwd = opt.cwd || process.cwd();
     const name = opt.name || env.TERM || DEFAULT_NAME;
-    const parsedEnv = this._parseEnv(env);
 
     // If the terminal is ready
     this._isReady = false;
@@ -48,7 +47,7 @@ export class WindowsTerminal extends Terminal {
     this._deferreds = [];
 
     // Create new termal.
-    this._agent = new WindowsPtyAgent(file, args, parsedEnv, cwd, this._cols, this._rows, false, opt.useConpty, opt.conptyInheritCursor);
+    this._agent = new WindowsPtyAgent(file, args, env, cwd, this._cols, this._rows, false, opt.useConpty, opt.conptyInheritCursor);
     this._socket = this._agent.outSocket;
 
     // Not available until `ready` event emitted.

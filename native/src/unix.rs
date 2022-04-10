@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 /// Copyright (c) 2012-2015, Christopher Jeffrey (MIT License)
 /// Copyright (c) 2017, Daniel Imms (MIT License)
-/// Copyright (c) 2022, Daniel Brenot (MIT License)
+/// Copyright (c) 2022, Daniel Brenot and Shachar Itzhaky (MIT License)
 /// 
 /// This file is responsible for starting processes
 /// with pseudo-terminal file descriptors.

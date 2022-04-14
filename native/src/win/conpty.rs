@@ -10,6 +10,7 @@
 
 
 use lazy_static::lazy_static;
+use windows::Win32::Foundation::GetLastError;
 use std::{collections::HashMap, ptr::null_mut, sync::{atomic::AtomicUsize, Arc, Mutex}};
 
 use std::collections::hash_map::Entry::Occupied;
@@ -98,9 +99,8 @@ lazy_static! {
 
 /// Returns a new server named pipe.
 /// It has not yet been connected.
-pub unsafe fn create_data_server_pipe(pipe_name: &str) -> napi::Result<HANDLE> {
-  // Convert the pipe name to a wide string pointer
-  let pipe_name = PCWSTR(WString::from_str(pipe_name).as_ptr());
+pub unsafe fn create_data_server_pipe(pipe_name: WString) -> napi::Result<HANDLE> {
+  
   //
   let win_open_mode = PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE;
   // Initialize empty security attributes
@@ -108,13 +108,13 @@ pub unsafe fn create_data_server_pipe(pipe_name: &str) -> napi::Result<HANDLE> {
   sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as _;
 
   let h_server = CreateNamedPipeW(
-      pipe_name, win_open_mode,
+      PCWSTR(pipe_name.as_ptr()), win_open_mode,
       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
       1, 0, 0, 30000,
       &sa
   );
   if h_server == INVALID_HANDLE_VALUE {
-      return err!("Failed to create handle for pipe");
+      return err!(format!("Failed to create handle for pipe. Error code: {}", GetLastError().0));
   }
   return Ok(h_server);
 }
@@ -129,9 +129,9 @@ pub unsafe fn create_named_pipes_and_pseudo_console(
   let name_input = format!("\\\\.\\pipe\\{}-in", pipe_name);
   let name_output = format!("\\\\.\\pipe\\{}-out", pipe_name);
   // Creates the input side of the pipe
-  let ph_input = create_data_server_pipe(&name_input)?;
+  let ph_input = create_data_server_pipe(WString::from_str(&name_input))?;
   // Creates the output side of the pipe
-  let ph_output = create_data_server_pipe(&name_output)?;
+  let ph_output = create_data_server_pipe(WString::from_str(&name_output))?;
   // Creates a pseudoconsole using the input and output sides of the pipes
   match CreatePseudoConsole(size, ph_input, ph_output, flags) {
       Ok(hpc) => {

@@ -6,7 +6,6 @@
 
 use crate::err;
 use std::{convert::TryFrom, collections::HashMap};
-
 use winsafe::WString;
 
 /// Converts a hashmap of key value pairs to a wide string of values.

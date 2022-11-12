@@ -1,3 +1,4 @@
+#[cfg(target_family = "windows")]
 pub mod util;
 pub mod conpty;
 pub mod winpty;

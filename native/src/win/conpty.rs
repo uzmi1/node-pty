@@ -1,35 +1,32 @@
 #![deny(clippy::all)]
-/// Copyright (c) 2013-2015, Christopher Jeffrey, Peter Sunde (MIT License)
-/// Copyright (c) 2016, Daniel Imms (MIT License).
-/// Copyright (c) 2018, Microsoft Corporation (MIT License).
-/// Copyright (c) 2022, Daniel Brenot, Shachar Itzhaky (MIT License)
-/// 
-/// This file is responsible for starting processes
-/// with pseudo-terminal file descriptors.
+// Copyright (c) 2013-2015, Christopher Jeffrey, Peter Sunde (MIT License)
+// Copyright (c) 2016, Daniel Imms (MIT License).
+// Copyright (c) 2018, Microsoft Corporation (MIT License).
+// Copyright (c) 2022, Daniel Brenot, Shachar Itzhaky (MIT License)
+// 
+// This file is responsible for starting processes
+// with pseudo-terminal file descriptors.
 
 
-
-use lazy_static::lazy_static;
-use windows::Win32::Foundation::GetLastError;
+use crate::err;
 use std::{collections::HashMap, ptr::null_mut, sync::{atomic::AtomicUsize, Arc, Mutex}};
-
-use std::collections::hash_map::Entry::Occupied;
-
+use napi::JsFunction;
 
 #[cfg(target_family = "windows")] use {
+  std::collections::hash_map::Entry::Occupied,
+  lazy_static::lazy_static,
   napi::{
     threadsafe_function::{
       ThreadSafeCallContext, ErrorStrategy,
       ThreadsafeFunction, ErrorStrategy::Fatal,
       ThreadsafeFunctionCallMode
-    },
-    JsFunction
+    }
   },
   windows::{
     Win32::{
       Foundation::{
         HANDLE, INVALID_HANDLE_VALUE, 
-        BOOLEAN, CloseHandle
+        BOOLEAN, CloseHandle, GetLastError
       },
       System::{
         Threading::{
@@ -64,10 +61,11 @@ use std::collections::hash_map::Entry::Occupied;
     },
     core::{PCWSTR, PWSTR}
   },
-  crate::{err, util::{map_to_wstring, coerce_i16}},
-  winsafe::WString
+  crate::{util::{map_to_wstring, coerce_i16}},
+  winsafe::{WString}
 };
 
+#[cfg(target_family = "windows")]
 struct ConptyBaton {
   /// Handle for the pseudoconsole
   pub hpc: HPCON,
@@ -87,11 +85,13 @@ struct ConptyBaton {
 /// We need to make sure any pointers held here are released
 /// to avoid memory leaks, and generally follow best practices
 /// for sharing pointers across threads
+#[cfg(target_family = "windows")]
 unsafe impl Send for ConptyBaton {}
 
 /// Static count of the next available id
 static PTY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_family = "windows")]
 lazy_static! {
   /// Static list of all pty handles protected by a mutex and atomic ref count 
   static ref PTY_HANDLES: Arc<Mutex<HashMap<usize, ConptyBaton>>> =  Arc::new(Mutex::new(HashMap::new()));
@@ -99,14 +99,12 @@ lazy_static! {
 
 /// Returns a new server named pipe.
 /// It has not yet been connected.
+#[cfg(target_family = "windows")]
 pub unsafe fn create_data_server_pipe(pipe_name: WString) -> napi::Result<HANDLE> {
-  
-  //
   let win_open_mode = PIPE_ACCESS_INBOUND | PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE;
   // Initialize empty security attributes
   let mut sa: SECURITY_ATTRIBUTES = SECURITY_ATTRIBUTES::default();
   sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as _;
-
   let h_server = CreateNamedPipeW(
       PCWSTR(pipe_name.as_ptr()), win_open_mode,
       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -120,6 +118,7 @@ pub unsafe fn create_data_server_pipe(pipe_name: WString) -> napi::Result<HANDLE
 }
 
 /// Creates input and output pipes with the given name
+#[cfg(target_family = "windows")]
 pub unsafe fn create_named_pipes_and_pseudo_console(
   size: COORD,
   flags: u32,
@@ -163,6 +162,7 @@ pub unsafe fn create_named_pipes_and_pseudo_console(
 /// the provided commandline, directory and environment.
 /// 
 /// Returns the process information for the newly created thread.
+#[cfg(target_family = "windows")]
 pub unsafe fn pty_connect(
   id: usize,
   cmdline: String,
@@ -266,6 +266,7 @@ pub unsafe fn pty_connect(
 /// by the compiler. This allows for the other process to call a
 /// predictable function when it exits. The exit code can then
 /// be sent to the async callback in javascript
+#[cfg(target_family = "windows")]
 pub unsafe extern "system" fn on_exit_process(ctx: *mut std::ffi::c_void, _b: BOOLEAN) -> () {
   // Takes ownership of the raw pointer,
   // allowing it to be owned by the local context and
@@ -316,19 +317,21 @@ fn conpty_start_process(
 ) -> napi::Result<IConptyProcess> {
   #[cfg(not(target_family = "windows"))]
   return err!("Platform not supported");
-  // Coerce the input values into coordinate values
-  let cols = coerce_i16(cols)?;
-  let rows = coerce_i16(rows)?;
+  #[cfg(target_family = "windows")] {
+    // Coerce the input values into coordinate values
+    let cols = coerce_i16(cols)?;
+    let rows = coerce_i16(rows)?;
 
-  unsafe {
-      let process = create_named_pipes_and_pseudo_console(
-      COORD { X: cols, Y: rows },
-      if conpty_inherit_cursor { 1 } else { 0 },
-        pipe_name
-      )?;
-      // Why do we do this?
-      SetConsoleCtrlHandler(None, None);
-      Ok(process)
+    unsafe {
+        let process = create_named_pipes_and_pseudo_console(
+        COORD { X: cols, Y: rows },
+        if conpty_inherit_cursor { 1 } else { 0 },
+          pipe_name
+        )?;
+        // Why do we do this?
+        SetConsoleCtrlHandler(None, None);
+        Ok(process)
+    }
   }
 }
 
@@ -337,16 +340,17 @@ fn conpty_start_process(
 fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: HashMap<String, String>, onexit: JsFunction) -> napi::Result<IConptyConnection> {
     #[cfg(not(target_family = "windows"))]
     return err!("Platform not supported");
-
-    unsafe {
+    #[cfg(target_family = "windows")] {
+      unsafe {
         pty_connect(
             pty_id as usize,
             cmdline, cwd, env,
             onexit
         )?
-    };
+      };
 
-    Ok(IConptyConnection { pid: pty_id })
+      Ok(IConptyConnection { pid: pty_id })
+    }
 }
 
 #[allow(dead_code)]
@@ -354,22 +358,23 @@ fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: HashMap<String
 fn conpty_resize(pty_id: i32, cols: i32, rows: i32) -> napi::Result<()>{
     #[cfg(not(target_family = "windows"))]
     return err!("Platform not supported");
+    #[cfg(target_family = "windows")] {
+      let pty_id = pty_id as usize;
+      let cols = coerce_i16(cols)?;
+      let rows = coerce_i16(rows)?;
 
-    let pty_id = pty_id as usize;
-    let cols = coerce_i16(cols)?;
-    let rows = coerce_i16(rows)?;
-
-    match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
-        Some(handle) => {
-            let size: COORD = COORD { X: cols, Y: rows };
-            unsafe { 
-              match ResizePseudoConsole(handle.hpc, size) {
-                Err(_) => return err!("Failed to resize Pseudoterminal"),
-                Ok(_) => return Ok(())
+      match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
+          Some(handle) => {
+              let size: COORD = COORD { X: cols, Y: rows };
+              unsafe { 
+                match ResizePseudoConsole(handle.hpc, size) {
+                  Err(_) => return err!("Failed to resize Pseudoterminal"),
+                  Ok(_) => return Ok(())
+                }
               }
-            }
-        },
-        None => { return err!("No pty was found with the provided id"); }
+          },
+          None => { return err!("No pty was found with the provided id"); }
+      }
     }
 }
 
@@ -378,17 +383,19 @@ fn conpty_resize(pty_id: i32, cols: i32, rows: i32) -> napi::Result<()>{
 unsafe fn conpty_kill(pty_id: i32) -> napi::Result<()> {
     #[cfg(not(target_family = "windows"))]
     return err!("Platform not supported");
-    let pty_id = pty_id as usize;
-    match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
-      Some(handle) => {
-          ClosePseudoConsole(handle.hpc);
-          DisconnectNamedPipe(handle.h_in);
-          DisconnectNamedPipe(handle.h_out);
-          CloseHandle(handle.h_in);
-          CloseHandle(handle.h_out);
-          CloseHandle(handle.h_shell);
-          return Ok(());
-      },
-      None => { return err!("No pty was found with the provided id"); }
-    }    
+    #[cfg(target_family = "windows")] {
+      let pty_id = pty_id as usize;
+      match PTY_HANDLES.lock().expect("Failed to get handle for pty list").get_mut(&pty_id) {
+        Some(handle) => {
+            ClosePseudoConsole(handle.hpc);
+            DisconnectNamedPipe(handle.h_in);
+            DisconnectNamedPipe(handle.h_out);
+            CloseHandle(handle.h_in);
+            CloseHandle(handle.h_out);
+            CloseHandle(handle.h_shell);
+            return Ok(());
+        },
+        None => { return err!("No pty was found with the provided id"); }
+      }    
+    }
 }

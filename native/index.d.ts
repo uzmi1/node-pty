@@ -15,6 +15,7 @@ export interface IUnixOpenProcess {
 }
 export function ptyFork(file: string, args: Array<string>, env: Record<string, string>, cwd: string, cols: number, rows: number, uid: number, gid: number, utf8: boolean, onexit: (...args: any[]) => any): IUnixProcess
 export function ptyOpen(cols: number, rows: number): IUnixOpenProcess
+/** Gets the name of the process with the given file descriptor */
 export function ptyProcess(fd: number, tty: string): string | undefined | null
 /**
  * Resizes the terminal pointed to by the provided file descriptor

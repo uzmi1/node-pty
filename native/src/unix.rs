@@ -8,26 +8,23 @@
 
 use std::collections::HashMap;
 
-use napi::JsFunction;
 
-#[cfg(target_family = "windows")]
+use napi::JsFunction;
 use crate::err;
 
 #[cfg(not(target_family = "windows"))] use {
   std::ffi::{CStr, CString},
-  std::io::Write,
-  std::process::Command,
   std::ptr::{null, null_mut},
   nix::libc::{O_NONBLOCK, TIOCSWINSZ, winsize},
   nix::libc::{B38400},
-  nix::libc::{sigfillset, ioctl, sysctl, forkpty, fcntl, termios},
+  nix::libc::{sigfillset, ioctl, forkpty, fcntl, termios},
   nix::libc::{cfsetispeed, cfsetospeed},
   nix::sys::signal::Signal,
   nix::libc::*,
   nix::libc::openpty,
   nix::errno::Errno,
   nix::unistd::chdir,
-  napi::{Result, JsFunction},
+  napi::{Result},
   napi::threadsafe_function::{ThreadSafeCallContext, ThreadsafeFunctionCallMode, ErrorStrategy}
 };
 
@@ -103,11 +100,10 @@ fn pty_fork(
     term.c_cc[VTIME] = 0;
 
     // Specific character support for macos
-    #[cfg(target_os = "macos")]
-        {
-          term.c_cc[VDSUSP] = 25;
-          term.c_cc[VSTATUS] = 20;
-        }
+    #[cfg(target_os = "macos")] {
+      term.c_cc[VDSUSP] = 25;
+      term.c_cc[VSTATUS] = 20;
+    }
 
     unsafe {
       // Set terminal input and output baud rate
@@ -160,7 +156,8 @@ fn pty_fork(
           let argv = nul_terminated(&cargs);
 
           // Prepare char *envv[]: [...env, null]
-          let cenv = env.iter().map(|s| { cstr_unsafe(s.clone()) })
+          let cenv = env.iter()
+              .map(|(key, value)| { cstr_unsafe(format!("{}={}", key, value)) })
               .collect::<Vec<_>>();
           let envv = nul_terminated(&cenv);
 
@@ -217,7 +214,7 @@ fn pty_open(cols: u32, rows: u32) -> napi::Result<IUnixOpenProcess> {
   }
 }
 
-// Gets the name of the process with the given fie descriptor
+/// Gets the name of the process with the given file descriptor
 #[allow(dead_code)]
 #[allow(unused_variables)]
 #[napi]
@@ -250,10 +247,10 @@ fn pty_resize(fd: i32, cols: i32, rows: i32) -> napi::Result<()>{
     };
     if (unsafe { ioctl(fd, TIOCSWINSZ, &winp) } == -1) {
         match Errno::last() {
-            EBADF => err!("ioctl(2) failed, EBADF"),
-            EFAULT =>err!( "ioctl(2) failed, EFAULT"),
-            EINVAL =>err!( "ioctl(2) failed, EINVAL"),
-            ENOTTY =>err!( "ioctl(2) failed, ENOTTY"),
+            Errno::EBADF => err!("ioctl(2) failed, EBADF"),
+            Errno::EFAULT => err!( "ioctl(2) failed, EFAULT"),
+            Errno::EINVAL => err!( "ioctl(2) failed, EINVAL"),
+            Errno::ENOTTY => err!( "ioctl(2) failed, ENOTTY"),
             _ => err!("ioctl(2) failed")
         }
     } else {
@@ -302,23 +299,21 @@ unsafe fn pty_ptsname(master: c_int) -> nix::Result<String> {
 /// http://www.gnu.org/software/gnulib/manual/html_node/execvpe.html
 #[cfg(not(target_family = "windows"))]
 unsafe fn pty_execvpe(file: *const i8, argv: *const *const i8, envp: *const *const i8) -> i32 {
-  /* this is the hackiest, but that's what used to be in the C++ implementation */
-  extern "C" {
-    static mut environ: *const *const i8;
-  }
+  // this is the hackiest, but that's what used to be in the C++ implementation
+  extern "C" { static mut environ: *const *const i8; }
   environ = envp;
-  /* suggestion: pass envp as Vec<String> and use
-   *   nix::env::clearenv();
-   *   std::env::setenv(...);
-   * also, optimization: change `unixTerminal.ts` to pass `undefined` in case
-   * an `env` option is not set. And then, in this case, skip this charade
-   * altogether.
-   */
+  // suggestion: pass envp as Vec<String> and use
+  //   nix::env::clearenv();
+  //   std::env::setenv(...);
+  // also, optimization: change `unixTerminal.ts` to pass `undefined` in case
+  // an `env` option is not set. And then, in this case, skip this charade
+  // altogether.
   return execvp(file, argv);
 }
 
 #[cfg(not(target_family = "windows"))]
 unsafe fn pty_nonblock(fd: c_int) -> Result<c_int> {
+
   match fcntl(fd, F_GETFL, 0) {
     -1 => return err!("failed to set nonblocking mode (fcntl(F_GETFL) failed)"),
     flags => match fcntl(fd, F_SETFL, flags | O_NONBLOCK) {

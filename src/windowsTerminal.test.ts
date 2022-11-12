@@ -57,33 +57,30 @@ function pollForProcessState(desiredState: IProcessState, intervalMs: number = 1
 function pollForProcessTreeSize(pid: number, size: number, intervalMs: number = 100, timeoutMs: number = 2000): Promise<IWindowsProcessTreeResult[]> {
   return new Promise<IWindowsProcessTreeResult[]>(resolve => {
     let tries = 0;
-    const interval = setInterval(() => {
-      psList({ all: true }).then(ps => {
-        const openList: IWindowsProcessTreeResult[] = [];
-        openList.push(ps.filter(p => p.pid === pid).map(p => {
+    const interval = setInterval(async () => {
+      let ps = await psList({ all: true });
+      const openList: IWindowsProcessTreeResult[] = [];
+      let filtered = ps.filter(p => p.pid === pid).map(p => ({ name: p.name, pid: p.pid }));
+      if (filtered.length > 0) openList.push(filtered[0]);
+      const list: IWindowsProcessTreeResult[] = [];
+      while (openList.length) {
+        const current = openList.shift();
+        ps.filter(p => p.ppid === current.pid).map(p => {
           return { name: p.name, pid: p.pid };
-        })[0]);
-        const list: IWindowsProcessTreeResult[] = [];
-        while (openList.length) {
-          const current = openList.shift();
-          ps.filter(p => p.ppid === current.pid).map(p => {
-            return { name: p.name, pid: p.pid };
-          }).forEach(p => openList.push(p));
-          list.push(current);
-        }
-        const success = list.length === size;
-        if (success) {
-          clearInterval(interval);
-          resolve(list);
-          return;
-        }
-        tries++;
-        if (tries * intervalMs >= timeoutMs) {
-          clearInterval(interval);
-          assert.fail(`Bad process state, expected: ${size}, actual: ${list.length}`);
-          resolve(null);
-        }
-      });
+        }).forEach(p => openList.push(p));
+        list.push(current);
+      }
+      const success = list.length === size;
+      if (success) {
+        clearInterval(interval);
+        resolve(list);
+        return;
+      }
+      tries++;
+      if (tries * intervalMs >= timeoutMs) {
+        clearInterval(interval);
+        assert.fail(`Bad process state, expected: ${size}, actual: ${list.length}`);
+      }
     }, intervalMs);
   });
 }
@@ -91,20 +88,20 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number = 
 if (process.platform === 'win32') {
   describe('WindowsTerminal', () => {
     describe('kill', () => {
-      it('should not crash parent process', (done) => {
+      it('should not crash parent process', function (done) {
         const term = new WindowsTerminal('cmd.exe', [], {});
         term.kill();
         // Add done call to deferred function queue to ensure the kill call has completed
         (<any>term)._defer(done);
       });
-      it('should kill the process tree', function (done: Mocha.Done): void {
+      it('should kill the process tree', function (done: Mocha.Done) {
         this.timeout(5000);
         const term = new WindowsTerminal('cmd.exe', [], {});
         // Start sub-processes
         term.write('powershell.exe\r');
         term.write('notepad.exe\r');
         term.write('node.exe\r');
-        pollForProcessTreeSize(term.pid, 4, 500, 5000).then(list => {
+        pollForProcessTreeSize(term.pid, 4, 500, 5000).then(async list=>{
           assert.equal(list[0].name, 'cmd.exe');
           assert.equal(list[1].name, 'powershell.exe');
           assert.equal(list[2].name, 'notepad.exe');
@@ -115,11 +112,10 @@ if (process.platform === 'win32') {
           desiredState[list[1].pid] = false;
           desiredState[list[2].pid] = true;
           desiredState[list[3].pid] = false;
-          pollForProcessState(desiredState).then(() => {
-            // Kill notepad before done
-            process.kill(list[2].pid);
-            done();
-          });
+          await pollForProcessState(desiredState)
+          // Kill notepad before done
+          process.kill(list[2].pid);
+          done();
         });
       });
     });

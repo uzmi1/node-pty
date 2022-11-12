@@ -171,6 +171,10 @@ pub unsafe fn pty_connect(
   onexit: JsFunction
 ) -> napi::Result<PROCESS_INFORMATION> {
   // Convert all 3 values to wstrings
+
+use std::{ptr, alloc::Layout};
+
+use windows::Win32::Foundation::ERROR_PIPE_CONNECTED;
   let env = map_to_wstring(env);
   let mut cmdline = WString::from_str(cmdline.as_str());
   let mut cwd = WString::from_str(cwd.as_str());
@@ -183,7 +187,8 @@ pub unsafe fn pty_connect(
       // Connects the named input and output pipes
       let mut success = ConnectNamedPipe(baton.h_in, null_mut()).as_bool()
         && ConnectNamedPipe(baton.h_out, null_mut()).as_bool();
-      if !success { return err!(format!("Failed to connect named pipes. Error code: {}", GetLastError().0)); }
+      // We ignore this error since it's actually a good thing!
+      if !success && GetLastError() != ERROR_PIPE_CONNECTED { return err!(format!("Failed to connect named pipes. Error code: {}", GetLastError().0)); }
 
       let mut lpstartupinfo = STARTUPINFOW::default();
       lpstartupinfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as _;
@@ -194,13 +199,16 @@ pub unsafe fn pty_connect(
       si_ex.StartupInfo = lpstartupinfo;
 
       let mut size: usize = 0;
-      InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST::default(), 1, 0, &mut size);
+      // Passing a null list allows for getting the appropriate size of the attribute list
+      let null_list = LPPROC_THREAD_ATTRIBUTE_LIST(ptr::null_mut());
+      InitializeProcThreadAttributeList(null_list, 1, 0, &mut size);
 
       // BYTE *attrList = new BYTE[size];
-      si_ex.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST::default();
+      let attr_list = std::alloc::alloc(Layout::from_size_align(size, std::mem::align_of::<u8>()).unwrap());
+      si_ex.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attr_list as _);
 
       success = InitializeProcThreadAttributeList(si_ex.lpAttributeList, 1, 0, &mut size).as_bool();
-      if !success { return err!("InitializeProcThreadAttributeList failed"); }
+      if !success { return err!(format!("InitializeProcThreadAttributeList failed. Error code: {}, bufferSize={}", GetLastError().0, size)); }
 
       success = UpdateProcThreadAttribute(
         si_ex.lpAttributeList,

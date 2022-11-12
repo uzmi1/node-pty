@@ -178,82 +178,86 @@ pub unsafe fn pty_connect(
   // Get the global handles
   let mut handles = PTY_HANDLES.lock().unwrap();
   // Fetch pty handle from ID and start process
-  let mut baton: &mut ConptyBaton = handles.get_mut(&id).unwrap();
-  // Connects the named input and output pipes
-  let mut success = ConnectNamedPipe(baton.h_in, null_mut()).as_bool()
-      && ConnectNamedPipe(baton.h_out, null_mut()).as_bool();
-  if !success { return err!("Failed to connect named pipes"); }
+  match handles.get_mut(&id) {
+    Some(baton) => {
+      // Connects the named input and output pipes
+      let mut success = ConnectNamedPipe(baton.h_in, null_mut()).as_bool()
+        && ConnectNamedPipe(baton.h_out, null_mut()).as_bool();
+      if !success { return err!(format!("Failed to connect named pipes. Error code: {}", GetLastError().0)); }
 
-  let mut lpstartupinfo = STARTUPINFOW::default();
-  lpstartupinfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as _;
-  lpstartupinfo.dwFlags = STARTF_USESTDHANDLES;
+      let mut lpstartupinfo = STARTUPINFOW::default();
+      lpstartupinfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as _;
+      lpstartupinfo.dwFlags = STARTF_USESTDHANDLES;
 
-  // Attach the pseudoconsole to the client application we're creating
-  let mut si_ex = STARTUPINFOEXW::default();
-  si_ex.StartupInfo = lpstartupinfo;
+      // Attach the pseudoconsole to the client application we're creating
+      let mut si_ex = STARTUPINFOEXW::default();
+      si_ex.StartupInfo = lpstartupinfo;
 
-  let mut size: usize = 0;
-  InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST::default(), 1, 0, &mut size);
+      let mut size: usize = 0;
+      InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST::default(), 1, 0, &mut size);
 
-  // BYTE *attrList = new BYTE[size];
-  si_ex.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST::default();
+      // BYTE *attrList = new BYTE[size];
+      si_ex.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST::default();
 
-  success = InitializeProcThreadAttributeList(si_ex.lpAttributeList, 1, 0, &mut size).as_bool();
-  if !success { return err!("InitializeProcThreadAttributeList failed"); }
+      success = InitializeProcThreadAttributeList(si_ex.lpAttributeList, 1, 0, &mut size).as_bool();
+      if !success { return err!("InitializeProcThreadAttributeList failed"); }
 
-  success = UpdateProcThreadAttribute(
-      si_ex.lpAttributeList,
-  0,
-  PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as _,
-  baton.hpc.0 as _,
-  std::mem::size_of::<HPCON>(),
-  null_mut(),
-  null_mut()
-  ).as_bool();
+      success = UpdateProcThreadAttribute(
+        si_ex.lpAttributeList,
+      0,
+      PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as _,
+      baton.hpc.0 as _,
+      std::mem::size_of::<HPCON>(),
+      null_mut(),
+      null_mut()
+      ).as_bool();
 
-  if !success { return err!("Failed to update thread attribute") }
-  
-  // Creates a process and gets the information about it to return
-  let mut pi_client = PROCESS_INFORMATION::default();
-  success = CreateProcessW(
-          PCWSTR(null_mut()),
-          PWSTR(cmdline.as_mut_ptr()),
-          null_mut(),
-          null_mut(),
-          false,
-          EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
-          env.as_ptr() as _,
-          PCWSTR(cwd.as_mut_ptr()),
-          &si_ex.StartupInfo,
-          &mut pi_client
-  ).as_bool();
+      if !success { return err!("Failed to update thread attribute") }
 
-  if !success { return err!("Cannot create process"); }
+      // Creates a process and gets the information about it to return
+      let mut pi_client = PROCESS_INFORMATION::default();
+      success = CreateProcessW(
+            PCWSTR(null_mut()),
+            PWSTR(cmdline.as_mut_ptr()),
+            null_mut(),
+            null_mut(),
+            false,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            env.as_ptr() as _,
+            PCWSTR(cwd.as_mut_ptr()),
+            &si_ex.StartupInfo,
+            &mut pi_client
+      ).as_bool();
 
-  // Set the handle for the shell to the one obtained from
-  // creating the new process
-  baton.h_shell = Some(pi_client.hProcess);
+      if !success { return err!("Cannot create process"); }
 
-  // Set the async callback for the baton to the function passed in from js
-  baton.async_cb = Some(onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
-      |ctx: ThreadSafeCallContext<u32>| {
-          ctx.env.create_uint32(ctx.value).map(|v0| { vec![v0] })
-      }
-  )?);
+      // Set the handle for the shell to the one obtained from
+      // creating the new process
+      baton.h_shell = Some(pi_client.hProcess);
 
-  // Setup Windows wait for process exit event
-  let mut h_wait = HANDLE::default();
-  RegisterWaitForSingleObject(
-      &mut h_wait,
-      pi_client.hProcess,
-      Some(on_exit_process),
-      Box::into_raw(Box::new(id)) as *mut _,
-      INFINITE,
-      WT_EXECUTEONLYONCE
-  );
-  baton.h_wait = Some(h_wait);
+      // Set the async callback for the baton to the function passed in from js
+      baton.async_cb = Some(onexit.create_threadsafe_function::<_, _, _, ErrorStrategy::Fatal>(0,
+        |ctx: ThreadSafeCallContext<u32>| {
+            ctx.env.create_uint32(ctx.value).map(|v0| { vec![v0] })
+        }
+      )?);
 
-  return Ok(pi_client);
+      // Setup Windows wait for process exit event
+      let mut h_wait = HANDLE::default();
+      RegisterWaitForSingleObject(
+        &mut h_wait,
+        pi_client.hProcess,
+        Some(on_exit_process),
+        Box::into_raw(Box::new(id)) as *mut _,
+        INFINITE,
+        WT_EXECUTEONLYONCE
+      );
+      baton.h_wait = Some(h_wait);
+
+      return Ok(pi_client);
+    },
+    None => return err!(format!("Failed to find baton for id {}", id)),
+  }
 }
 
 /// This function acts as a native callback point for when processes end.

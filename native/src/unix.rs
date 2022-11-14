@@ -224,11 +224,7 @@ fn pty_process(fd: i32, tty: String) -> Option<String> {
   #[cfg(not(target_family = "windows"))] {
     // TODO do we want to replace this with a result and throw an error instead?
     if tty.is_empty() {return None; }
-    let name = pty_getproc(fd, tty);
-    match name {
-        Ok(name) => return Some(name),
-        Err(err) => return None,
-    }
+    return pty_getproc(fd);
   }
 }
 
@@ -360,4 +356,48 @@ fn mk_sigaction() -> sigaction {
     sa_flags: 0,
     sa_restorer: None
   }
+}
+
+#[cfg(target_os = "linux")]
+fn pty_getproc(fd: c_int) -> Option<String> {
+    use std::fs::read_to_string;
+
+  
+  let pgrp = unsafe { tcgetpgrp(fd) };
+  if pgrp == -1 { return None; }
+
+  let path = format!("/proc/{}/cmdline", pgrp);
+
+  return match read_to_string(path) {
+    Ok(contents) => Some(contents),
+    Err(_) => None
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn pty_getproc(fd: c_int) -> Option<String> {
+  use nix::libc::{CTL_KERN, KERN_PROC, KERN_PROC_PID};
+  let mib = [ CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 ];
+  let size;
+  let kp;
+
+  // if ((mib[3] = tcgetpgrp(fd)) == -1) {
+  //   return NULL;
+  // }
+
+  // size = sizeof kp;
+  // if (sysctl(mib, 4, &kp, &size, NULL, 0) == -1) {
+  //   return NULL;
+  // }
+
+  // if (size != (sizeof kp) || *kp.kp_proc.p_comm == '\0') {
+  //   return NULL;
+  // }
+
+  // return strdup(kp.kp_proc.p_comm);
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn pty_getproc(fd: c_int) -> Option<String> {
+  return None;
 }

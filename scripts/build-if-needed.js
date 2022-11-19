@@ -17,6 +17,8 @@ async function main() {
             throw Error('Native library is old')
         }
     } catch (e) {
+        // Clear a line before output. Prevents extending previous line when installing
+        console.log();
         console.log(`No current binary was found for the platform ${process.platform}.`);
         console.log('A binary will now be built for this platform. This may take a while.');
         // Run the build in the native folder

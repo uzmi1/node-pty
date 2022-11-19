@@ -9,11 +9,13 @@
 
 
 use crate::err;
-use std::{collections::HashMap, ptr::null_mut, sync::{atomic::AtomicUsize, Arc, Mutex}};
+use std::collections::HashMap;
 use napi::JsFunction;
 
 #[cfg(target_family = "windows")] use {
   std::collections::hash_map::Entry::Occupied,
+  std::ptr::null_mut,
+  std::sync::{Arc, Mutex, atomic::AtomicUsize},
   lazy_static::lazy_static,
   napi::{
     threadsafe_function::{
@@ -89,6 +91,7 @@ struct ConptyBaton {
 unsafe impl Send for ConptyBaton {}
 
 /// Static count of the next available id
+#[cfg(target_family = "windows")]
 static PTY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(target_family = "windows")]
@@ -308,7 +311,7 @@ struct IConptyConnection {
   pub pid: i32
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn conpty_start_process(
   cols: i32, rows: i32,
@@ -335,6 +338,7 @@ fn conpty_start_process(
   }
 }
 
+#[allow(unused_variables)]
 #[allow(dead_code)]
 #[napi]
 fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: HashMap<String, String>, onexit: JsFunction) -> napi::Result<IConptyConnection> {
@@ -353,7 +357,7 @@ fn conpty_connect(pty_id: i32, cmdline: String, cwd: String, env: HashMap<String
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn conpty_resize(pty_id: i32, cols: i32, rows: i32) -> napi::Result<()>{
     #[cfg(not(target_family = "windows"))]
@@ -378,7 +382,7 @@ fn conpty_resize(pty_id: i32, cols: i32, rows: i32) -> napi::Result<()>{
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 unsafe fn conpty_kill(pty_id: i32) -> napi::Result<()> {
     #[cfg(not(target_family = "windows"))]

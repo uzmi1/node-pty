@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as tty from 'tty';
 import { constants } from 'os';
 import { pollUntil } from './testUtils.test';
+import { expect } from 'chai';
 
 const FIXTURES_PATH = path.normalize(path.join(__dirname, '..', 'fixtures', 'utf8-character.txt'));
 
@@ -28,7 +29,7 @@ if (process.platform !== 'win32') {
           regExp = /^\/dev\/tty[p-sP-S][a-z0-9]+$/;
         }
         if (regExp) {
-          assert.ok(regExp.test(term.ptsName), '"' + term.ptsName + '" should match ' + regExp.toString());
+          expect(term.ptsName).to.match(regExp);
         }
         assert.ok(tty.isatty(term.fd));
       });
@@ -38,8 +39,8 @@ if (process.platform !== 'win32') {
       it('should default to utf8', (done) => {
         const term = new UnixTerminal('/bin/bash', [ '-c', `cat "${FIXTURES_PATH}"` ]);
         term.on('data', (data) => {
-          assert.equal(typeof data, 'string');
-          assert.equal(data, '\u00E6');
+          assert.strictEqual(typeof data, 'string');
+          assert.strictEqual(data, '\u00E6');
           done();
         });
       });
@@ -48,10 +49,10 @@ if (process.platform !== 'win32') {
           encoding: null
         });
         term.on('data', (data) => {
-          assert.equal(typeof data, 'object');
+          assert.strictEqual(typeof data, 'object');
           assert.ok(data instanceof Buffer);
-          assert.equal(0xC3, data[0]);
-          assert.equal(0xA6, data[1]);
+          assert.strictEqual(0xC3, data[0]);
+          assert.strictEqual(0xA6, data[1]);
           done();
         });
       });
@@ -62,11 +63,11 @@ if (process.platform !== 'win32') {
         });
         let buffer = '';
         term.on('data', (data) => {
-          assert.equal(typeof data, 'string');
+          assert.strictEqual(typeof data, 'string');
           buffer += data;
         });
         term.on('exit', () => {
-          assert.equal(Buffer.alloc(8, buffer, 'base64').toString().replace('\r', '').replace('\n', ''), text);
+          assert.strictEqual(Buffer.alloc(8, buffer, 'base64').toString().replace('\r', '').replace('\n', ''), text);
           done();
         });
       });
@@ -154,8 +155,8 @@ if (process.platform !== 'win32') {
         });
         p.on('close', () => {
           // handlers in parent and child should have been triggered
-          assert.equal(buffer.indexOf('SIGINT in child') !== -1, true);
-          assert.equal(buffer.indexOf('SIGINT in parent') !== -1, true);
+          assert.strictEqual(buffer.indexOf('SIGINT in child') !== -1, true);
+          assert.strictEqual(buffer.indexOf('SIGINT in parent') !== -1, true);
           done();
         });
       });
@@ -195,8 +196,8 @@ if (process.platform !== 'win32') {
         });
         p.on('close', () => {
           // handlers in parent and child should have been triggered
-          assert.equal(buffer.indexOf('should not be printed') !== -1, false);
-          assert.equal(buffer.indexOf('SIGINT in parent') !== -1, true);
+          assert.strictEqual(buffer.indexOf('should not be printed') !== -1, false);
+          assert.strictEqual(buffer.indexOf('SIGINT in parent') !== -1, true);
           done();
         });
       });
@@ -215,7 +216,7 @@ if (process.platform !== 'win32') {
         });
         term.on('exit', () => {
           // no timeout in buffer
-          assert.equal(buffer, '');
+          assert.strictEqual(buffer, '');
           done();
         });
       });
@@ -247,8 +248,8 @@ if (process.platform !== 'win32') {
         });
         term.on('exit', () => {
           // should have called both handlers and only once
-          assert.equal(pHandlerCalled, 1);
-          assert.equal(buffer, 'SIGUSR1 in child\r\n');
+          assert.strictEqual(pHandlerCalled, 1);
+          assert.strictEqual(buffer, 'SIGUSR1 in child\r\n');
           done();
         });
       });

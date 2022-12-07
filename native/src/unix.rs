@@ -397,7 +397,7 @@ fn pty_getproc(fd: c_int) -> Option<String> {
   // return strdup(kp.kp_proc.p_comm);
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn pty_getproc(fd: c_int) -> Option<String> {
   return None;
 }

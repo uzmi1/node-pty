@@ -13,7 +13,7 @@ describe('EventEmitter2', () => {
     emitter.event(data => order.push(data + 'b'));
     emitter.fire(1);
     emitter.fire(2);
-    assert.deepEqual(order, [ '1a', '1b', '2a', '2b' ]);
+    assert.deepStrictEqual(order, [ '1a', '1b', '2a', '2b' ]);
   });
 
   it('should not fire listeners once disposed', () => {
@@ -25,6 +25,6 @@ describe('EventEmitter2', () => {
     emitter.fire(1);
     disposeB.dispose();
     emitter.fire(2);
-    assert.deepEqual(order, [ '1a', '1b', '1c', '2a', '2c' ]);
+    assert.deepStrictEqual(order, [ '1a', '1b', '1c', '2a', '2c' ]);
   });
 });

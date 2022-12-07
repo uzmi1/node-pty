@@ -8,6 +8,7 @@ import * as assert from 'assert';
 import { WindowsTerminal } from './windowsTerminal';
 import * as path from 'path';
 import * as psList from 'ps-list';
+import { expect } from 'chai';
 
 interface IProcessState {
   // Whether the PID must exist or must not exist
@@ -47,7 +48,6 @@ function pollForProcessState(desiredState: IProcessState, intervalMs: number = 1
           clearInterval(interval);
           const processListing = pids.map(k => `${k}: ${desiredState[k]}`).join('\n');
           assert.fail(`Bad process state, expected:\n${processListing}`);
-          resolve();
         }
       });
     }, intervalMs);
@@ -65,9 +65,9 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number = 
       const list: IWindowsProcessTreeResult[] = [];
       while (openList.length) {
         const current = openList.shift();
-        ps.filter(p => p.ppid === current.pid).map(p => {
-          return { name: p.name, pid: p.pid };
-        }).forEach(p => openList.push(p));
+        ps.filter(p => p.ppid === current.pid)
+          .map(p => ({ name: p.name, pid: p.pid }))
+          .forEach(p => openList.push(p));
         list.push(current);
       }
       const success = list.length === size;
@@ -102,10 +102,10 @@ if (process.platform === 'win32') {
         term.write('notepad.exe\r');
         term.write('node.exe\r');
         pollForProcessTreeSize(term.pid, 4, 500, 5000).then(async list=>{
-          assert.equal(list[0].name, 'cmd.exe');
-          assert.equal(list[1].name, 'powershell.exe');
-          assert.equal(list[2].name, 'notepad.exe');
-          assert.equal(list[3].name, 'node.exe');
+          assert.strictEqual(list[0].name, 'cmd.exe');
+          assert.strictEqual(list[1].name, 'powershell.exe');
+          assert.strictEqual(list[2].name, 'notepad.exe');
+          assert.strictEqual(list[3].name, 'node.exe');
           term.kill();
           const desiredState: IProcessState = {};
           desiredState[list[0].pid] = false;
@@ -160,7 +160,19 @@ if (process.platform === 'win32') {
           result += data;
         });
         term.on('exit', () => {
-          assert.ok(result.indexOf('hello world') >= 1);
+          expect(result).to.contain('hello world');
+          done();
+        });
+      });
+    });
+
+    describe('env', () => {
+      it('should place text into a file', (done) => {
+        const term = new WindowsTerminal('cmd.exe', 'echo %FOO% > C:\\Users\\DanielBrenot\\out.txt', { env: { FOO: 'BAR' }});
+        let result = '';
+        term.on('data', (data) => result += data);
+        term.on('exit', () => {
+          expect(result).to.contain('BAR');
           done();
         });
       });
@@ -170,11 +182,9 @@ if (process.platform === 'win32') {
       it('should set environment variables of the shell', (done) => {
         const term = new WindowsTerminal('cmd.exe', '/C echo %FOO%', { env: { FOO: 'BAR' }});
         let result = '';
-        term.on('data', (data) => {
-          result += data;
-        });
+        term.on('data', (data) => result += data);
         term.on('exit', () => {
-          assert.ok(result.indexOf('BAR') >= 0);
+          expect(result).to.contain('BAR');
           done();
         });
       });
@@ -184,7 +194,7 @@ if (process.platform === 'win32') {
       it('should return process zero exit codes', (done) => {
         const term = new WindowsTerminal('cmd.exe', '/C exit');
         term.on('exit', (code) => {
-          assert.equal(code, 0);
+          assert.strictEqual(code, 0);
           done();
         });
       });
@@ -192,7 +202,7 @@ if (process.platform === 'win32') {
       it('should return process non-zero exit codes', (done) => {
         const term = new WindowsTerminal('cmd.exe', '/C exit 2');
         term.on('exit', (code) => {
-          assert.equal(code, 2);
+          assert.strictEqual(code, 2);
           done();
         });
       });

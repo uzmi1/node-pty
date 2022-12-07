@@ -82,9 +82,9 @@ describe('Terminal', () => {
   describe('automatic flow control', () => {
     it('should respect ctor flow control options', () => {
       const pty = new terminalConstructor(SHELL, [], {handleFlowControl: true, flowControlPause: 'abc', flowControlResume: '123'});
-      assert.equal(pty.handleFlowControl, true);
-      assert.equal((pty as any)._flowControlPause, 'abc');
-      assert.equal((pty as any)._flowControlResume, '123');
+      assert.strictEqual(pty.handleFlowControl, true);
+      assert.strictEqual((pty as any)._flowControlPause, 'abc');
+      assert.strictEqual((pty as any)._flowControlResume, '123');
     });
     // TODO: I don't think this test ever worked due to pollUntil being used incorrectly
     // it('should do flow control automatically', async function(): Promise<void> {

@@ -7,7 +7,7 @@ import * as assert from 'assert';
 import { argsToCommandLine } from './windowsPtyAgent';
 
 function check(file: string, args: string | string[], expected: string): void {
-  assert.equal(argsToCommandLine(file, args), expected);
+  assert.strictEqual(argsToCommandLine(file, args), expected);
 }
 
 if (process.platform === 'win32') {

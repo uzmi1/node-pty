@@ -172,9 +172,9 @@ pub unsafe fn pty_connect(
 ) -> napi::Result<PROCESS_INFORMATION> {
   // Convert all 3 values to wstrings
 
-use std::{ptr, alloc::Layout};
-
-use windows::Win32::Foundation::ERROR_PIPE_CONNECTED;
+  use std::{ptr, alloc::Layout};
+  use windows::Win32::Foundation::ERROR_PIPE_CONNECTED;
+  
   let env = map_to_wstring(env);
   let mut cmdline = WString::from_str(cmdline.as_str());
   let mut cwd = WString::from_str(cwd.as_str());
@@ -336,7 +336,7 @@ fn conpty_start_process(
         if conpty_inherit_cursor { 1 } else { 0 },
           pipe_name
         )?;
-        // Why do we do this?
+        // Restore default handling of ctrl+c
         SetConsoleCtrlHandler(None, None);
         Ok(process)
     }

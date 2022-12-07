@@ -17,14 +17,11 @@ async function main() {
             throw Error('Native library is old')
         }
     } catch (e) {
+        // Clear a line before output. Prevents extending previous line when installing
+        console.log();
         console.log(`No current binary was found for the platform ${process.platform}.`);
         console.log('A binary will now be built for this platform. This may take a while.');
-        // Run the build in the native folder
-        const result = await exec('npm run build', {
-            cwd: path.join(__dirname, '..', 'native'),
-        });
-        if (result.stdout) { console.log(result.stdout); }
-        if (result.stderr) { console.error(result.stderr); }
+        process.exit(-1);
     }
 }
 // Calls the async function from a sync context.

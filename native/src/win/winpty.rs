@@ -7,22 +7,23 @@
 /// This file is responsible for starting processes
 /// with pseudo-terminal file descriptors.
 
-use std::{collections::HashMap, sync::{Arc, Mutex}, ptr::{null_mut, null}};
+use std::collections::HashMap;
 
-use which::which;
 use crate::{err};
-use std::collections::hash_map::Entry::{Vacant, Occupied};
-use lazy_static::lazy_static;
-
-use std::os::raw::c_int;
 
 #[cfg(target_family = "windows")] use {
     crate::util::map_to_wstring,
+    lazy_static::lazy_static,
+    std::{ sync::{Arc, Mutex}, ptr::{null_mut, null} },
+    std::os::raw::c_int,
+    std::collections::hash_map::Entry::{Vacant, Occupied},
+    which::which,
     winsafe::WString,
     windows::{Win32::{System::{Environment::SetEnvironmentVariableW, Threading::{GetProcessId, GetExitCodeProcess}}, Foundation::{HANDLE, CloseHandle}}, core::PCWSTR},
     winpty_sys::{winpty_config_new, winpty_error_ptr_t, winpty_error_free, winpty_config_set_initial_size, winpty_open, winpty_config_free, winpty_t, winpty_agent_process, winpty_spawn_config_new, WINPTY_SPAWN_FLAG_AUTO_SHUTDOWN, winpty_spawn, winpty_spawn_config_free, winpty_conin_name, winpty_conout_name, winpty_set_size, winpty_get_console_process_list, DWORD}
 };
 
+#[cfg(target_family = "windows")]
 const WINPTY_DBG_VARIABLE: &str = "WINPTYDBG";
 
 #[cfg(target_family = "windows")]
@@ -42,9 +43,9 @@ pub struct IWinptyProcess {
     pub inner_pid_handle: i32
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
-unsafe fn winpty_start_process(mut file: String, command_line: String, env: HashMap<String, String>, cwd: String, cols: i32, rows: i32, debug: bool) -> napi::Result<IWinptyProcess> {
+unsafe fn winpty_start_process(file: String, command_line: String, env: HashMap<String, String>, cwd: String, cols: i32, rows: i32, debug: bool) -> napi::Result<IWinptyProcess> {
     #[cfg(not(target_family = "windows"))]
     return err!("Unsupported architecture");
     #[cfg(target_family = "windows")] {
@@ -147,7 +148,7 @@ unsafe fn winpty_start_process(mut file: String, command_line: String, env: Hash
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn winpty_resize(pid: i32, cols: i32, rows: i32) -> napi::Result<()> {
     #[cfg(not(target_family = "windows"))]
@@ -171,7 +172,7 @@ fn winpty_resize(pid: i32, cols: i32, rows: i32) -> napi::Result<()> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn winpty_kill(pid: i32, inner_pid_handle: i32) -> napi::Result<()> {
     #[cfg(not(target_family = "windows"))]
@@ -193,7 +194,7 @@ fn winpty_kill(pid: i32, inner_pid_handle: i32) -> napi::Result<()> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn winpty_get_process_list(pid: i32) -> napi::Result<Vec<i32>> {
     #[cfg(not(target_family = "windows"))]
@@ -229,7 +230,7 @@ fn winpty_get_process_list(pid: i32) -> napi::Result<Vec<i32>> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 fn winpty_get_exit_code(inner_pid_handle: i32) -> i32 {
     #[cfg(not(target_family = "windows"))]

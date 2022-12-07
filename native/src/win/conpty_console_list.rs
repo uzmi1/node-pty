@@ -5,11 +5,12 @@
 /// This file is responsible for getting process lists
 /// on the windows platform
 
+#[cfg(target_family = "windows")]
 use std::os::raw::{c_int, c_uint};
 
 use crate::err;
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 #[napi]
 unsafe fn get_console_process_list(pid: i32) -> napi::Result<Vec<i32>> {
     #[cfg(not(target_family = "windows"))]

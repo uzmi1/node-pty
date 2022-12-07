@@ -18,6 +18,7 @@
   "files": [
     "lib/",
     "scripts/",
+    "native/",
     "src/",
     "deps/",
     "typings/",
@@ -40,10 +41,10 @@
   ],
   "scripts": {
     "build": "tsc -b ./src/tsconfig.json",
-    "build:native": "cd native && npm run build && cd ../",
+    "build:native": "npm run build --prefix ./native",
     "watch": "tsc -b -w ./src/tsconfig.json",
     "lint": "eslint -c .eslintrc.js --ext .ts src/",
-    "install": "node ./scripts/build-if-needed.js",
+    "install": "node ./scripts/build-if-needed.js || npm run build:native",
     "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
     "posttest": "npm run lint",
     "prepare": "npm run build",
